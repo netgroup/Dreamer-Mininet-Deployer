@@ -21,6 +21,7 @@ import os
 import shutil
 import sys
 import re
+import argparse
 
 # This code has been taken from mininet's example bind.py, but we had to fix some stuff
 # because some thing don't work properly, for example xterm. We add when necessary explanation
@@ -1180,12 +1181,30 @@ def init_net(net):
 	root.cmd('/etc/init.d/openvswitch-switch restart') 
 	unmountAll()
 
+def parse_cmd_line():
+	parser = argparse.ArgumentParser(description='Mininet Deployer')
+	parser.add_argument('--topology', dest='topoInfo', action='store', default='mesh:3', help='Topology Info topo:param, e.g., mesh:3 or file:topo.json')
+	args = parser.parse_args()	
+	if len(sys.argv)==1:
+    		parser.print_help()
+    		sys.exit(1)
+	data = args.topoInfo.split(":")	
+	return (data[0], data[1])
+
+
 if __name__ == '__main__':
 	unmountAll()
 	net = None
 	lg.setLogLevel('info')
-	net = Mesh(3)
-	init_net(net)
+	(topo, param) = parse_cmd_line()
+	if topo == 'file':
+		print "*** Create Topology From File:", param
+	elif topo == 'mesh':
+		print "*** Create Built-in Topology mesh[%s]" % param
+	else:
+		print "Error Unrecognized Topology"
+	#net = Mesh(3)
+	#init_net(net)
 
 
 	# Cemetery of Code
