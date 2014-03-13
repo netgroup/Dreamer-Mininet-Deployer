@@ -4,6 +4,7 @@ import os
 import json
 import sys
 from topo_parser_utils import Subnet
+from topo_parser_utils import TestbedSubnet
 
 class TopoParser:
 
@@ -18,6 +19,7 @@ class TopoParser:
 		self.l2links = []
 		self.ppsubnets = []
 		self.l2subnets = []
+		self.subnetclass = Subnet
 		if self.verbose:
 			print "*** __init__:"
 		if os.path.exists(path_json) == False:
@@ -101,7 +103,7 @@ class TopoParser:
 	def create_subnet(self):
 		# Creates the ppsubnets
 		for pplink in self.pplinks:
-			s = Subnet()
+			s = self.subnetclass()
 			s.appendLink(pplink)
 			if 'euh' in pplink[0] or 'euh' in pplink[1]:
 				s.type = "ACCESS"
@@ -118,7 +120,7 @@ class TopoParser:
 		tmp = []
 		for sw in self.l2sws:
 			tmp.append(sw)
-			s = Subnet()
+			s = self.subnetclass()
 			while len(tmp) > 0:
 				current = tmp[0]
 				if 'euh' in current:
@@ -158,4 +160,10 @@ class TopoParser:
 		for link in tmp:
 			self.l2links.remove(link)
 		return (ret_node, ret_links)
-	
+
+# Parser For Testbed Deployer
+class TestbedTopoParser(TopoParser):
+
+		def __init__(self, path_json, verbose=False):
+        		TopoParser.__init__(self, path_json, verbose=False)
+			self.subnetclass = TestbedSubnet

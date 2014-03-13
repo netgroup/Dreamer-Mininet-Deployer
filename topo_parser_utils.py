@@ -79,3 +79,29 @@ class Subnet:
 			self.links.remove(link)
 		self.nodes.remove(node)
 		return (ret_node, ret_link)
+
+class TestbedSubnet(Subnet):
+
+		def __init__(self, Type=None):
+        		Subnet.__init__(self, Type)
+
+		def getOrderedLinks(self):
+			print self.nodes			
+			links = []
+			i = 0			
+			for i in range(0, len(self.nodes)):
+				for j in range(i+1,len(self.nodes)):
+					if 'sw' not in self.nodes[i] and 'sw' not in self.nodes[j]:
+						if 'euh' not in self.nodes[i] or 'euh' not in self.nodes[j]:
+							links.append((self.nodes[i], self.nodes[j]))
+					j = j + 1
+				i = i + 1
+			self.nodes = []
+			self.links = []
+			return links
+			
+
+
+
+
+
