@@ -16,7 +16,8 @@ class TopoParser:
 		self.euhs = []
 		self.pplinks = []
 		self.l2links = []
-		self.subnets = []
+		self.ppsubnets = []
+		self.l2subnets = []
 		if self.verbose:
 			print "*** __init__:"
 		if os.path.exists(path_json) == False:
@@ -27,7 +28,7 @@ class TopoParser:
 		json_file.close()
 		if self.verbose:
 			print "*** JSON Data Loaded:"
-			print json.dumps(self.json_data, sort_keys=True, indent=4)
+			#print json.dumps(self.json_data, sort_keys=True, indent=4)
 
 	# Parse Function, first retrieves the vertices from json data,
 	# second retrieves the links from json data, finally create the
@@ -38,7 +39,8 @@ class TopoParser:
 		self.create_subnet()
 	
 	def getsubnets(self):
-		return self.subnets
+		self.parse_data()
+		return (self.ppsubnets, self.l2subnets)
 
 	# Parses vertex from json_data, renames the node in 'vertices' and in 'edges', 
 	# and divides them in: oshi (Core Oshi), aoshi (Access Oshi), l2sws (Legacy L2 switch)
@@ -103,9 +105,15 @@ class TopoParser:
 			s.appendLink(pplink)
 			if 'euh' in pplink[0] or 'euh' in pplink[1]:
 				s.type = "ACCESS"
-			self.subnets.append(s)
+			self.ppsubnets.append(s)
 		# Eliminates all links
 		self.pplinks = []
+		if self.verbose:
+			i = 0
+			print "*** Subnets:"
+			for subnet in self.ppsubnets:
+				print "*** PP Subnet(%s) - Type %s: Nodes %s - Links %s" %(i + 1, subnet.type, subnet.nodes, subnet.links)
+				i = i + 1
 		# Creates the l2subnets
 		tmp = []
 		for sw in self.l2sws:
@@ -122,12 +130,12 @@ class TopoParser:
 				for link in links:
 					s.appendLink(link)
 			if len(s.links) > 0:
-				self.subnets.append(s)	
+				self.l2subnets.append(s)	
 		if self.verbose:
 			i = 0
 			print "*** Subnets:"
-			for subnet in self.subnets:
-				print "*** Subnet(%s) - Type %s: Nodes %s - Links %s" %(i + 1, subnet.type, subnet.nodes, subnet.links)
+			for subnet in self.l2subnets:
+				print "*** L2 Subnet(%s) - Type %s: Nodes %s - Links %s" %(i + 1, subnet.type, subnet.nodes, subnet.links)
 				i = i + 1
 
 	# Utility Function, provides node's next hop and links (to the nexthop)

@@ -9,6 +9,7 @@ from mininet.util import errFail, quietRun, errRun
 from mininet.topo import SingleSwitchTopo
 from mininet.log import setLogLevel, info, debug
 from mininet.log import lg
+from topo_parser import TopoParser
 
 import networkx as nx
 import numpy as np
@@ -284,8 +285,8 @@ def give_me_next_loopback():
 CORE_APPROACH = 'A' # It can be A or B
 
 # XXX Virtual Leased Line Configuration
-LHS_tunnel = ['euh1']#,'euh1','euh4','euh6']
-RHS_tunnel = ['euh2']#,'euh3','euh6','euh5']
+LHS_tunnel = ['euh1','euh2','euh3','euh4','euh5','euh6','euh7']
+RHS_tunnel = ['euh3','euh4','euh5','euh6','euh7','euh1','euh2']
 tunnels = []
 LHS_tunnel_aoshi = []
 RHS_tunnel_aoshi = []
@@ -296,6 +297,8 @@ RHS_tunnel_vlan = []
 TRUNK_TO_TAG = {}
 ACCESS_TO_TAG = {}
 AOSHI_TO_TAG = {}
+
+verbose = True
 
 
 class L2AccessNetwork:
@@ -455,7 +458,192 @@ def check_host():
 			print "Error Misconfiguration Virtual Leased Line"
 			print "Error Cannot Connect", host1, "To", host2
 			sys.exit(2)
-			
+
+def buildTopoFromFile(param):
+	global oshis
+	global aoshis
+	global switches
+	global hosts
+	global ctrls
+
+	if verbose:
+		print "*** Build Topology From Parsed File"
+	parser = TopoParser(param, verbose=False)
+	(ppsubnets, l2subnets) = parser.getsubnets()
+	set_oshis = parser.oshis
+	set_aoshis = parser.aoshis
+	set_l2sws = parser.l2sws
+	set_euhs = parser.euhs
+	hosts_in_rn = []
+	remounts = findRemounts( fstypes=[ 'devpts' ] )
+	privateDirs = [ '/var/log/', '/var/log/quagga', '/var/run', '/var/run/quagga', '/var/run/openvswitch']
+	host = partial( HostWithPrivateDirs, remounts=remounts,
+                privateDirs=privateDirs, unmount=False )
+	net = Mininet( controller=RemoteController, switch=OVSKernelSwitch, host=host, build=False )
+	if verbose:
+		print "*** Build OSHI"	
+	for oshi in set_oshis:
+		osh = net.addHost(oshi)
+		oshis.append(osh)
+	if verbose:
+		print "*** Build AOSHI"
+	for aoshi in set_aoshis:
+		aos = net.addHost(aoshi)
+		aoshis.append(aos)
+	if verbose:
+		print "*** Build L2SWS"
+	for l2sw in set_l2sws:
+		sw = net.addSwitch(l2sw)
+		switches.append(sw)
+		hosts_in_rn.append(sw)
+	if verbose:
+		print "*** Build EUHS"
+	for euh in set_euhs:
+		net.addHost(euh)
+		hosts.append(euh)	
+	if verbose:	
+		print "*** Create Core Networks Point To Point"
+	i = 0
+	for ppsubnet in ppsubnets:
+		if ppsubnet.type == "CORE":
+			if verbose:
+				print "*** Subnet: Node %s - Links %s" %(ppsubnet.nodes, ppsubnet.links)
+			node1 = net.getNodeByName(ppsubnet.links[0][0])
+			node2 = net.getNodeByName(ppsubnet.links[0][1])
+			l = net.addLink(node1, node2)
+			nets.append(OSPFNetwork(intfs=[l.intf1.name,l.intf2.name], ctrl=False))
+			if verbose:			
+				print "*** Connect", node1.name, "To", node2.name
+		i = i + 1
+	if verbose:	
+		print "*** Create Core Networks Switched"
+	for l2subnet in l2subnets:
+		if l2subnet.type == "CORE":
+			if verbose:
+				print "*** Subnet: Node %s - Links %s" % (ppsubnet.nodes, ppsubnet.links)
+			intfs = []
+			for link in l2subnet.links:
+				node1 = net.getNodeByName(link[0])
+				node2 = net.getNodeByName(link[1])
+				l = net.addLink(node1, node2)
+				if verbose:			
+					print "*** Connect", node1.name, "To", node2.name
+				if 'sw' not in link[0] and 'sw' in link[1]:
+					intfs.append(l.intf1.name)
+				elif 'sw' in link[0] and 'sw' not in link[1]:
+					intfs.append(l.intf2.name)
+				elif 'sw' in link[0] and 'sw' in link[1]:
+					continue
+				else:
+					print "Error Switched Networks - Both EndPoint != SW"
+					sys.exit(-2)
+			nets.append(OSPFNetwork(intfs, ctrl=False))
+		i = i + 1
+	if verbose:	
+		print "*** Create Access Networks Point To Point"
+	i = 0
+	for ppsubnet in ppsubnets:
+		if ppsubnet.type == "ACCESS":
+			# XXX The Order now is important
+			"""if verbose:
+				print "*** Subnet: Node %s - Links %s" %(ppsubnet.nodes, ppsubnet.links)
+			node1 = net.getNodeByName(ppsubnet.links[0][0])
+			node2 = net.getNodeByName(ppsubnet.links[0][1])
+			l = net.addLink(node1, node2)
+			nets.append(OSPFNetwork(intfs=[l.intf1.name,l.intf2.name], ctrl=False))
+			if verbose:			
+				print "*** Connect", node1.name, "To", node2.name"""
+			print "Error Not Managed For Now"
+			sys.exit(-2)
+		i = i + 1
+	if verbose:	
+		print "*** Create Acces Networks Switched"
+	for l2subnet in l2subnets:
+		if l2subnet.type == "ACCESS":
+			l2net = L2AccessNetwork(classification = 'B')
+			if verbose:
+				print "*** Subnet: Node %s - Links %s" % (l2subnet.nodes, l2subnet.links)
+				print "*** Create L2 Access Network - Classification", l2net.classification	
+			intfs = []
+			# XXX The Order now is important
+			ord_links = l2subnet.getOrderedLinks()
+			for link in ord_links:
+				node1 = net.getNodeByName(link[0])
+				node2 = net.getNodeByName(link[1])
+				l = net.addLink(node1, node2)
+				l2net.addLink(l)
+				if verbose:			
+					print "*** Connect", node1.name, "To", node2.name
+				if 'sw' not in link[0] and 'sw' in link[1]:
+					intfs.append(l.intf1.name)
+				elif 'sw' in link[0] and 'sw' not in link[1]:
+					intfs.append(l.intf2.name)
+				elif 'sw' in link[0] and 'sw' in link[1]:
+					continue
+				else:
+					print "Error Switched Networks - Both EndPoint != SW"
+					sys.exit(-2)
+			nets.append(OSPFNetwork(intfs, ctrl=False))
+			L2nets.append(l2net)
+		i = i + 1	
+	
+	print "*** Creating controller"
+	c1 = RemoteController( 'c1', ip=ctrls_ip[0], port=ctrls_port[0])
+	ctrls.append(c1)
+	hosts_in_rn.append(c1)
+
+	# Connect the controller to the network
+	print "*** Connect", osh.name, "To Controller"
+	l = net.addLink(osh, c1)
+	nets.append(OSPFNetwork(intfs=[l.intf1.name, l.intf2.name], ctrl=True))
+	
+	# Only needed for hosts in root namespace
+	fixIntf(hosts_in_rn)
+
+	# Utility function		
+	check_host()
+	
+	for i in range(0, len(LHS_tunnel)):
+		tunnels.append(Tunnel())
+
+	loopback[2]=sdn_lastnet
+
+	print "*** Loopback Address Start From:", loopback 
+	print "*** Tunnels LHS:", LHS_tunnel
+	print "*** Tunnels RHS:", RHS_tunnel
+
+	# Tunnels Setup
+	IP_tunnel_setup()
+	SDN_tunnel_setup(net)
+
+	i = 0
+	for tunnel in tunnels :	
+		print "*** Tunnel %d, Subnet %s0, Intfs %s" % (i+1, tunnel.subnet, tunnel.intfs)
+		i = i + 1
+
+	i = 0
+	for l2net in L2nets:
+		print "***", l2net.name
+		print "*** Nodes:", l2net.Nodes
+		print "*** Links:", l2net.Links
+		print "*** Intfs:", l2net.intfs
+		i = i + 1
+	
+	print "*** AOSHI Tag:", AOSHI_TO_TAG
+	print "*** Trunk Port Configuration:", TRUNK_TO_TAG
+	print "*** Access Port Configuration:", ACCESS_TO_TAG
+	print "*** LHS AOSHI:", LHS_tunnel_aoshi
+	print "*** RHS AOSHI:", RHS_tunnel_aoshi
+	print "*** LHS Port:", LHS_tunnel_port
+	print "*** RHS Port:", RHS_tunnel_port
+
+
+	for network in nets:
+		print "*** OSPF Network:", network.subnet + "0,", str(network.intfs) + ",", "cost %s," % network.cost, "hello interval %s," % network.hello_int
+	return net
+
+
+
 	
 def Mesh(OSHI=4):
 	global ctrls
@@ -518,7 +706,7 @@ def Mesh(OSHI=4):
 
 	i = 0
 	for tunnel in tunnels :	
-		print "*** Tunnel %d, Subnet %s0, Intfs %s" % (i, tunnel.subnet, tunnel.intfs)
+		print "*** Tunnel %d, Subnet %s0, Intfs %s" % (i+1, tunnel.subnet, tunnel.intfs)
 		i = i + 1
 
 	i = 0
@@ -688,25 +876,26 @@ def SDN_tunnel_setup_oneside(net, side):
 		done = False
 		currentNode = host
 		aoshi = L2nets[i].getAoshi(host)
-		# Special Case Local Tunnel - i.e. in the same l2 net
-		if side == 'RHS' and aoshi[0] == LHS_tunnel_aoshi[k]:
+		if side == 'RHS' and aoshi[0] == LHS_tunnel_aoshi[k] and aoshi[2] == LHS_tunnel_port[k]:
+			print "*** Internal Tunnel"
 			value = LHS_tunnel_vlan[k]
 			tag = value
 		else: 
 			default = 2
-			value = AOSHI_TO_TAG.get(aoshi[1], default)
+			# The Aoshi's link is the RHS
+			value = AOSHI_TO_TAG.get(aoshi[2], default)
 			tag = value
-			AOSHI_TO_TAG[aoshi[1]] = value + 1
+			AOSHI_TO_TAG[aoshi[2]] = value + 1
 		print "*** VLAN Tag", tag
 		while done == False:
 			nextNode = L2nets[i].getNextHop(currentNode)
 			if 'euh' in currentNode and 'sw' in nextNode[0]:
-				lhs_new_link = net.getNodeByName(nextNode[0])				
-				rhs_new_link = net.getNodeByName(currentNode)
+				rhs_new_link = net.getNodeByName(nextNode[0])				
+				lhs_new_link = net.getNodeByName(currentNode)
 				l = net.addLink(lhs_new_link, rhs_new_link)
-				tunnels[k].add_intf(l.intf2.name)
+				tunnels[k].add_intf(l.intf1.name)
 				# l.intf1 contains the NextHop's new port
-				ACCESS_TO_TAG[l.intf1.name] = str(tag) + ","
+				ACCESS_TO_TAG[l.intf2.name] = str(tag) + ","
 				z = 0
 				for network in nets:
 					if len(network.belong(currentNode)) > 0:
@@ -716,30 +905,30 @@ def SDN_tunnel_setup_oneside(net, side):
 					print "Configuration Error"
 					print "Cannot Find The Host", currentNode, "In The OSPF Networks"
 					sys.exit(-2)
-				network.append_intf(l.intf2.name)
+				network.append_intf(l.intf1.name)
 				currentNode = nextNode[0]
 			elif 'sw' in currentNode:
-				# NextNode[2] contains the currentNode's port
+				# NextNode[1] contains the currentNode's port
 				default = ""
-				tags = (TRUNK_TO_TAG.get(nextNode[2], default)).split(',')
+				tags = (TRUNK_TO_TAG.get(nextNode[1], default)).split(',')
 				if str(tag) not in tags:
-					TRUNK_TO_TAG[nextNode[2]] = TRUNK_TO_TAG.get(nextNode[2], default) + str(tag) + ","
+					TRUNK_TO_TAG[nextNode[1]] = TRUNK_TO_TAG.get(nextNode[1], default) + str(tag) + ","
 				if 'aos' in nextNode[0]:
 					aoshi = net.getNodeByName(nextNode[0])
 					if side == 'LHS':
 						LHS_tunnel_aoshi.append(aoshi.name)
-						LHS_tunnel_port.append(nextNode[1])
+						LHS_tunnel_port.append(nextNode[2])
 						LHS_tunnel_vlan.append(tag)
 					else:
 						RHS_tunnel_aoshi.append(aoshi.name)
-						RHS_tunnel_port.append(nextNode[1])
+						RHS_tunnel_port.append(nextNode[2])
 						RHS_tunnel_vlan.append(tag)
 					done = True
 				elif 'sw' in nextNode[0]:
 					# NextNode[1] contains the nextHop's port
-					tags = (TRUNK_TO_TAG.get(nextNode[1], default)).split(',')
+					tags = (TRUNK_TO_TAG.get(nextNode[2], default)).split(',')
 					if str(tag) not in tags:
-						TRUNK_TO_TAG[nextNode[1]] = TRUNK_TO_TAG.get(nextNode[1], default) + str(tag) + ","
+						TRUNK_TO_TAG[nextNode[2]] = TRUNK_TO_TAG.get(nextNode[2], default) + str(tag) + ","
 				currentNode = nextNode[0]
 			else:
 				print "Error In The Network Configuration"
@@ -775,20 +964,21 @@ def IP_tunnel_setup():
 			nextNode = L2nets[i].getNextHop(currentNode)
 			if 'euh' in currentNode and 'sw' in nextNode[0]:
 				# NextNode[1] contains the Link's LHS
-				ACCESS_TO_TAG[nextNode[1]] = tag + ","
+				# ACCESS PORT is the RHS
+				ACCESS_TO_TAG[nextNode[2]] = tag + ","
 				currentNode = nextNode[0]
 			elif 'sw' in currentNode:
 				# NextNode[1] contains the Link's LHS
 				default = ""
-				tags = (TRUNK_TO_TAG.get(nextNode[2], default)).split(',')
+				tags = (TRUNK_TO_TAG.get(nextNode[1], default)).split(',')
 				if tag not in tags:
-					TRUNK_TO_TAG[nextNode[2]] = TRUNK_TO_TAG.get(nextNode[2], default) + tag + ","
+					TRUNK_TO_TAG[nextNode[1]] = TRUNK_TO_TAG.get(nextNode[1], default) + tag + ","
 				if 'aos' in nextNode[0]:
 					done = True
 				elif 'sw' in nextNode[0]:
-					tags = (TRUNK_TO_TAG.get(nextNode[1], default)).split(',')
+					tags = (TRUNK_TO_TAG.get(nextNode[2], default)).split(',')
 					if tag not in tags:
-						TRUNK_TO_TAG[nextNode[1]] = TRUNK_TO_TAG.get(nextNode[1], default) + tag + ","
+						TRUNK_TO_TAG[nextNode[2]] = TRUNK_TO_TAG.get(nextNode[2], default) + tag + ","
 				currentNode = nextNode[0]
 			else:
 				print "Error In The Network Configuration"
@@ -834,10 +1024,10 @@ def create_l2_access_network(aoshi, net, n_host=1):
 	sw = net.addSwitch("sw%s" % (next+1))
 	print "*** Create Switch", sw.name
 	hosts_in_rn.append(sw)
-	l = net.addLink(aoshi, sw)
-	print "*** Connect", aoshi, "To", sw
+	l = net.addLink(sw, aoshi)
+	print "*** Connect", sw, "To", aoshi
 	l2net.addLink(l)
-	intfs.append(l.intf1.name)
+	intfs.append(l.intf2.name)
 	switches.append(sw)
 
 	# Create Another L2 Switch
@@ -846,19 +1036,19 @@ def create_l2_access_network(aoshi, net, n_host=1):
 	# print "*** Create Switch", sw.name
 	# sw = net.addSwitch("sw%s" % (next+1))
 	# hosts_in_rn.append(sw)
-	# l = net.addLink(temp, sw)
-	# print "*** Connect", temp, "To", sw
+	# l = net.addLink(sw, temp)
+	# print "*** Connect", sw, "To", temp
 	# l2net.addLink(l)
 	# switches.append(sw)
 
 	print "*** Create End User Hosts"
 	for i in range(len(hosts), (len(hosts) + n_host)):
 		host = net.addHost(('euh%s') % (i+1))
-		l = net.addLink(sw, host)
+		l = net.addLink(host,sw)
 		l2net.addLink(l)
 		print "*** Connect", host, "To", sw
 		hosts.append(host.name)
-		intfs.append(l.intf2.name)
+		intfs.append(l.intf1.name)
 	nets.append(OSPFNetwork(intfs, ctrl=False, hello_int=2))
 	fixIntf(hosts_in_rn)
 	L2nets.append(l2net)	
@@ -1199,12 +1389,14 @@ if __name__ == '__main__':
 	(topo, param) = parse_cmd_line()
 	if topo == 'file':
 		print "*** Create Topology From File:", param
+		net = buildTopoFromFile(param)
 	elif topo == 'mesh':
 		print "*** Create Built-in Topology mesh[%s]" % param
+		net = Mesh(int(param))
 	else:
 		print "Error Unrecognized Topology"
-	#net = Mesh(3)
-	#init_net(net)
+		sys.exit(-2)
+	init_net(net)
 
 
 	# Cemetery of Code
