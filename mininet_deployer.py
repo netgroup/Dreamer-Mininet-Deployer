@@ -285,8 +285,8 @@ def give_me_next_loopback():
 CORE_APPROACH = 'A' # It can be A or B
 
 # XXX Virtual Leased Line Configuration
-LHS_tunnel = ['euh1','euh2','euh3','euh4','euh5','euh6','euh7']
-RHS_tunnel = ['euh3','euh4','euh5','euh6','euh7','euh1','euh2']
+LHS_tunnel = ['euh1','euh2','euh3']#,'euh4','euh5','euh6','euh7']
+RHS_tunnel = ['euh3','euh3','euh1']#,'euh6','euh7','euh1','euh2']
 tunnels = []
 LHS_tunnel_aoshi = []
 RHS_tunnel_aoshi = []
@@ -1292,10 +1292,10 @@ def configure_vll_pusher():
 	for i in range(0, len(LHS_tunnel_aoshi)):
 		aoshi = LHS_tunnel_aoshi[i]
 		port = LHS_tunnel_port[i]
-		lhs_port = convert_port_name_to_number(aoshi, port)
+		lhs_port = port #convert_port_name_to_number(aoshi, port)
 		aoshi = RHS_tunnel_aoshi[i]
 		port = RHS_tunnel_port[i]
-		rhs_port = convert_port_name_to_number(aoshi, port)
+		rhs_port = port #convert_port_name_to_number(aoshi, port)
 		vll_pusher_cfg.write("%s|%s|%s|%s|%d|%d|\n" % (LHS_tunnel_aoshi[i], RHS_tunnel_aoshi[i], lhs_port, rhs_port, LHS_tunnel_vlan[i], RHS_tunnel_vlan[i]))
 	vll_pusher_cfg.close()
 	root = Node( 'root', inNamespace=False )
