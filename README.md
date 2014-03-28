@@ -1,7 +1,12 @@
+![Alt text](repo_data/dreamer-logo.png "Optional title")
+
 Dreamer-Mininet-Deployer
 ========================
 
 Mininet Deployer For Dreamer Project (GÉANT Open Call)
+
+Using this tool you can deploy your topology of OSHI node and the
+set of services that we support (Classification and VLL).
 
 License
 =======
