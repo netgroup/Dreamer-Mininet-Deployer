@@ -3,9 +3,9 @@
 from mininet.net import Mininet
 import time
 from mininet.cli import CLI
-from mininet.node import RemoteController, Host, Node, OVSKernelSwitch
+from mininet.node import RemoteController, Node, OVSKernelSwitch
 from mininet.link import Link
-from mininet.util import errFail, quietRun, errRun
+
 from mininet.topo import SingleSwitchTopo
 from mininet.log import setLogLevel, info, debug
 from mininet.log import lg
@@ -15,186 +15,17 @@ import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
 
-from os.path import realpath
+
+from oshi import OSHI
+from deployer_utils import unmountAll
+
 from functools import partial
 import subprocess
 import os
 import shutil
 import sys
-import re
 import argparse
 
-# This code has been taken from mininet's example bind.py, but we had to fix some stuff
-# because some thing don't work properly, for example xterm. We add when necessary explanation
-# of the code
-
-# Utility functions for unmounting a tree
-
-# Real path of OSHI's dir
-MNRUNDIR = realpath( '/var/run/mn' )
-
-# Take the mounted points of the root machine
-def mountPoints():
-    "Return list of mounted file systems"
-    mtab, _err, _ret = errFail( 'cat /proc/mounts' )
-    lines = mtab.split( '\n' )
-    mounts = []
-    for line in lines:
-        if not line:
-            continue
-        fields = line.split( ' ')
-        mount = fields[ 1 ]
-        mounts.append( mount )
-    return mounts
-
-# Utility Function for unmount all the dirs
-def unmountAll( rootdir=MNRUNDIR ):
-    "Unmount all mounts under a directory tree"
-    rootdir = realpath( rootdir )
-    # Find all mounts below rootdir
-    # This is subtle because /foo is not
-    # a parent of /foot
-    dirslash = rootdir + '/'
-    mounts = [ m for m in mountPoints()
-              if m == dir or m.find( dirslash ) == 0 ]
-    # Unmount them from bottom to top
-    mounts.sort( reverse=True )
-    for mount in mounts:
-        debug( 'Unmounting', mount, '\n' )
-        _out, err, code = errRun( 'umount', mount )
-        if code != 0:
-            info( '*** Warning: failed to umount', mount, '\n' )
-            info( err )
-
-# Class that inherits from Host and extends it with the funcion
-# of the private dir
-class HostWithPrivateDirs( Host ):
-    "Host with private directories"
-
-    mnRunDir = MNRUNDIR
-    dpidLen = 16
-
-    def __init__(self, name, dpid=None, *args, **kwargs ):
-        """privateDirs: list of private directories
-           remounts: dirs to remount
-           unmount: unmount dirs in cleanup? (True)
-           Note: if unmount is False, you must call unmountAll()
-           manually."""
-        self.privateDirs = kwargs.pop( 'privateDirs', [] )
-        self.remounts = kwargs.pop( 'remounts', [] )
-        self.unmount = kwargs.pop( 'unmount', True )
-        Host.__init__( self, name, *args, **kwargs )
-        self.rundir = '%s/%s' % ( self.mnRunDir, name )
-        self.root, self.private = None, None  # set in createBindMounts
-        if self.privateDirs:
-            self.privateDirs = [ realpath( d ) for d in self.privateDirs ]
-            self.createBindMounts()
-        # These should run in the namespace before we chroot,
-        # in order to put the right entries in /etc/mtab
-        # Eventually this will allow a local pid space
-        # Now we chroot and cd to wherever we were before.
-        pwd = self.cmd( 'pwd' ).strip()
-        self.sendCmd( 'exec chroot', self.root, 'bash -ms mininet:'
-                       + self.name )
-        self.waiting = False
-        self.cmd( 'cd', pwd )
-        # In order for many utilities to work,
-        # we need to remount /proc and /sys
-        self.cmd( 'mount /proc' )
-        self.cmd( 'mount /sys' )
-	self.dpid = dpid if dpid else self.defaultDpid()
-    
-    def defaultDpid( self ):
-        "Derive dpid from switch name, s1 -> 1"
-        try:
-            dpid = int( re.findall( r'\d+', self.name )[ 0 ] )
-            dpid = hex( dpid )[ 2: ]
-            dpid = '0' * ( self.dpidLen - len( dpid ) ) + dpid
-            return dpid
-        except IndexError:
-            raise Exception( 'Unable to derive default datapath ID - '
-                             'please either specify a dpid or use a '
-                             'canonical switch name such as s23.' )
-
-    def mountPrivateDirs( self ):
-        "Create and bind mount private dirs"
-        for dir_ in self.privateDirs:
-            privateDir = self.private + dir_
-            errFail( 'mkdir -p ' + privateDir )
-            mountPoint = self.root + dir_
-	    #print mountPoint
-            errFail( 'mount -B %s %s' %
-                           ( privateDir, mountPoint) )
-
-    def mountDirs( self, dirs ):
-        "Mount a list of directories"
-        for dir_ in dirs:
-            mountpoint = self.root + dir_
-	    #print mountpoint
-            errFail( 'mount -B %s %s' %
-                     ( dir_, mountpoint ) )
-
-    @classmethod
-    def findRemounts( cls, fstypes=None ):
-        """Identify mount points in /proc/mounts to remount
-           fstypes: file system types to match"""
-        if fstypes is None:
-            fstypes = [ 'nfs' ]
-        dirs = quietRun( 'cat /proc/mounts' ).strip().split( '\n' )
-        remounts = []
-        for dir_ in dirs:
-            line = dir_.split()
-            mountpoint, fstype = line[ 1 ], line[ 2 ]
-            # Don't re-remount directories!!!
-            if mountpoint.find( cls.mnRunDir ) == 0:
-                continue
-            if fstype in fstypes:
-                remounts.append( mountpoint )
-        return remounts
-
-    def createBindMounts( self ):
-        """Create a chroot directory structure,
-           with self.privateDirs as private dirs"""
-        errFail( 'mkdir -p '+ self.rundir )
-        unmountAll( self.rundir )
-        # Create /root and /private directories
-        self.root = self.rundir + '/root'
-        self.private = self.rundir + '/private'
-        errFail( 'mkdir -p ' + self.root )
-        errFail( 'mkdir -p ' + self.private )
-        # Recursively mount / in private doort
-        # note we'll remount /sys and /proc later
-        errFail( 'mount -B / ' + self.root )
-        self.mountDirs( self.remounts )
-        self.mountPrivateDirs()
-
-    def unmountBindMounts( self ):
-        "Unmount all of our bind mounts"
-        unmountAll( self.rundir )
-
-    def popen( self, *args, **kwargs ):
-        "Popen with chroot support"
-        chroot = kwargs.pop( 'chroot', True )
-        mncmd = kwargs.get( 'mncmd',
-                           [ 'mnexec', '-a', str( self.pid ) ] )
-        if chroot:
-            mncmd = [ 'chroot', self.root ] + mncmd
-            kwargs[ 'mncmd' ] = mncmd
-        return Host.popen( self, *args, **kwargs )
-
-    def cleanup( self ):
-        """Clean up, then unmount bind mounts
-           unmount: actually unmount bind mounts?"""
-        # Wait for process to actually terminate
-        self.shell.wait()
-        Host.cleanup( self )
-        if self.unmount:
-            self.unmountBindMounts()
-            errFail( 'rmdir ' + self.root )
-
-# Convenience aliases
-
-findRemounts = HostWithPrivateDirs.findRemounts
 
 def fixIntf(hosts):
 	for i in range(0, len(hosts)):
@@ -285,8 +116,8 @@ def give_me_next_loopback():
 CORE_APPROACH = 'A' # It can be A or B
 
 # XXX Virtual Leased Line Configuration
-LHS_tunnel = ['euh1']#,'euh2','euh3']#,'euh4','euh5','euh6','euh7']
-RHS_tunnel = ['euh7']#,'euh3','euh1']#,'euh6','euh7','euh1','euh2']
+LHS_tunnel = ['euh1']
+RHS_tunnel = ['euh3']
 tunnels = []
 LHS_tunnel_aoshi = []
 RHS_tunnel_aoshi = []
@@ -475,11 +306,7 @@ def buildTopoFromFile(param):
 	set_l2sws = parser.l2sws
 	set_euhs = parser.euhs
 	hosts_in_rn = []
-	remounts = findRemounts( fstypes=[ 'devpts' ] )
-	privateDirs = [ '/var/log/', '/var/log/quagga', '/var/run', '/var/run/quagga', '/var/run/openvswitch']
-	host = partial( HostWithPrivateDirs, remounts=remounts,
-                privateDirs=privateDirs, unmount=False )
-	net = Mininet( controller=RemoteController, switch=OVSKernelSwitch, host=host, build=False )
+	net = Mininet( controller=RemoteController, switch=OVSKernelSwitch, host=OSHI, build=False )
 	if verbose:
 		print "*** Build OSHI"	
 	for oshi in set_oshis:
@@ -645,24 +472,20 @@ def buildTopoFromFile(param):
 
 
 	
-def Mesh(OSHI=4):
+def Mesh(OSHI_n=4):
 	global ctrls
 	global oshis
 	global aoshis
 	global SDN_PORTS
 	global TUNNEL_SETUP
 	"Create A Mesh Topo"
-	print "*** Mesh With", OSHI, "OSHI"
+	print "*** Mesh With", OSHI_n, "OSHI"
 	"Creating OSHI"
-	remounts = findRemounts( fstypes=[ 'devpts' ] )
-	privateDirs = [ '/var/log/', '/var/log/quagga', '/var/run', '/var/run/quagga', '/var/run/openvswitch']
-	host = partial( HostWithPrivateDirs, remounts=remounts,
-                privateDirs=privateDirs, unmount=False )
-	net = Mininet( controller=RemoteController, switch=OVSKernelSwitch, host=host, build=False )
+	net = Mininet( controller=RemoteController, switch=OVSKernelSwitch, host=OSHI, build=False )
 	i = 0
 	h = 0
 	print "*** Create Core Networks"
-	for i in range(OSHI):
+	for i in range(OSHI_n):
 		oshi = (net.addHost('osh%s' % (i+1)))
 		for rhs in oshis:
 			l = net.addLink(oshi, rhs)
@@ -728,63 +551,12 @@ def Mesh(OSHI=4):
 		print "*** OSPF Network:", network.subnet + "0,", str(network.intfs) + ",", "cost %s," % network.cost, "hello interval %s," % network.hello_int
 	return net
 
-def balanced_tree_from_nx(fanout, depth):
-	g = nx.balanced_tree(fanout, depth)
-	global ctrls
-	"Create An Erdos Reny Topo"
-	"Creating OSHI"
-	remounts = findRemounts( fstypes=[ 'devpts' ] )
-	privateDirs = [ '/var/log/', '/var/log/quagga', '/var/run', '/var/run/quagga', '/var/run/openvswitch']
-	host = partial( HostWithPrivateDirs, remounts=remounts,
-	privateDirs=privateDirs, unmount=False )
-	net = Mininet( controller=RemoteController, switch=OVSKernelSwitch, host=host, build=False )
-	i = 0
-	h = 0
-	# This is the basic behavior, but we have to modify it in order to creare switched networks
-	for n in g.nodes():
-		n = n + 1
-		oshi = (net.addHost('osh%s' % (n)))
-		oshis.append(oshi)
-	for (n1, n2) in g.edges():
-		n1 = n1 + 1
-		n2 = n2 + 1
-		lhs = net.getNodeByName('osh%s' % n1)
-		rhs = net.getNodeByName('osh%s' % n2)
-		l = net.addLink(lhs, rhs)
-		nets.append(OSPFNetwork(intfs=[l.intf1.name,l.intf2.name], ctrl=False))
-		print "*** Connect", lhs, "To", rhs 
-
-	hosts_in_rn = []
-	c1 = RemoteController( 'c1', ip=ctrls_ip[0], port=ctrls_port[0])
-	ctrls.append(c1)
-	hosts_in_rn.append(c1)
-	# Connecting the controller to the network 
-	print "*** Connect %s" % oshi," To c1"
-	l = net.addLink(oshi, c1)
-	nets.append(OSPFNetwork(intfs=[l.intf1.name,l.intf2.name], ctrl=True, hello_int=5))
-	
-	# Only needed for hosts in root namespace
-	fixIntf(hosts_in_rn)
-
-	for network in nets:
-		print "*** Create Network:", network.subnet + "0,", str(network.intfs) + ",", "cost %s," % network.cost, "hello interval %s," % network.hello_int
-
-	pos = nx.graphviz_layout(g, prog='dot')
-        nx.draw(g, pos)
-        plt.savefig("topo.png")
-
-	return net
-
 def erdos_renyi_from_nx(n, p):
 	g = nx.erdos_renyi_graph(n,p)
 	global ctrls
 	"Create An Erdos Reny Topo"
 	"Creating OSHI"
-	remounts = findRemounts( fstypes=[ 'devpts' ] )
-	privateDirs = [ '/var/log/', '/var/log/quagga', '/var/run', '/var/run/quagga', '/var/run/openvswitch']
-	host = partial( HostWithPrivateDirs, remounts=remounts,
-	privateDirs=privateDirs, unmount=False )
-	net = Mininet( controller=RemoteController, switch=OVSKernelSwitch, host=host, build=False )
+	net = Mininet( controller=RemoteController, switch=OVSKernelSwitch, host=OSHI, build=False )
 	i = 0
 	h = 0
 	# This is the basic behavior, but we have to modify it in order to creare switched networks
@@ -1381,12 +1153,16 @@ def parse_cmd_line():
 	data = args.topoInfo.split(":")	
 	return (data[0], data[1])
 
+def check_precond():
+	unmountAll()
+
 
 if __name__ == '__main__':
-	unmountAll()
+	
 	net = None
 	lg.setLogLevel('info')
 	(topo, param) = parse_cmd_line()
+	check_precond()
 	if topo == 'file':
 		print "*** Create Topology From File:", param
 		net = buildTopoFromFile(param)
@@ -1397,76 +1173,3 @@ if __name__ == '__main__':
 		print "Error Unrecognized Topology"
 		sys.exit(-2)
 	init_net(net)
-
-
-	# Cemetery of Code
-	#print "*** Creating End-User Hosts"
-	#i = 0
-	#for i in range(OSHI): 
-		#temp = net.addHost(('euh%s') % (i+1))
-		#l = net.addLink(temp, oshis[i])
-		#nets.append(OSPFNetwork(intfs=[l.intf1.name, l.intf2.name], ctrl=False))
-		#print "*** Connect", temp, "To", oshis[i]
-		#hosts.append(temp)
-
-	#intfs = []
-	#print "*** Creating L2 Switch"
-	#s1 = net.addSwitch("s%s" % 1)
-	#s2 = net.addSwitch("s%s" % 2)
-	#s3 = net.addSwitch("s%s" % 3)
-	
-	#hosts_in_rn.append(c1)
-	#hosts_in_rn.append(c0)
-	#hosts_in_rn.append(s2)	
-	#hosts_in_rn.append(s1)
-	#hosts_in_rn.append(s3)
-
-	#switches.append(s1)
-	#switches.append(s2)
-	#switches.append(s3)
-	
-	#print "*** Connect s1 To s2"
-	#net.addLink(s1,s2)
-	#print "*** Connect s1 To s3"
-	#net.addLink(s1,s3)
-	#print "*** Connect s2 To s3"
-	#net.addLink(s2,s3)
-	#print "*** Connect", oshi.name, "To s1"
-	#l = net.addLink(oshi, s1)
-	#intfs.append(l.intf1.name)
-	#oshi = oshis[len(oshis)-2]
-	#print "*** Connect", oshi.name, "To s2"
-	#l = net.addLink(oshi, s2)
-	#intfs.append(l.intf1.name)
-	#print "*** Connect s3 To c1"
-	#l = net.addLink(s3, c1)
-	#intfs.append(l.intf2.name)
-	#print "*** Connect s1 To c1"
-	#l = net.addLink(s1, c1)
-	#intfs.append(l.intf2.name)
-	#print "*** Connect s2 To c1"
-	#l = net.addLink(s2, c1)
-	#intfs.append(l.intf2.name)
-	#nets.append(OSPFNetwork(intfs, ctrl=True, hello_int=5))
-
-	# Node Configuration
-	# node.cmd('modprobe 8021q')
-	# node.cmd('vconfig add %s %s' % (intf, VLAN_SDN))
-	# intftemp = intf + "." + str(VLAN_SDN)
-	# node.cmd('ip addr add %s%s/%s brd + dev %s' %(sdn_subnet, last_sdn_host, sdn_netbit, intftemp))
-	# node.cmd('ip link set %s up' % intftemp)
-	# last_sdn_host = last_sdn_host + 1
-	
-	# Configuration For NO_VLAN_APPROACH				
-	# node.cmd('ip addr add %s/%s brd + dev %s' %(ip, netbit, intf))
-	# node.cmd('ip link set %s up' % intf)
-	# node.cmd('route add default gw %s %s' %(gw_ip, intf))	
-
-	# Configuration For VLAN_APPROACH				
-
-	#node.cmd('modprobe 8021q')
-	#node.cmd('vconfig add %s %s' % (intf, VLAN_IP))
-	#intftemp = intf + "." + str(VLAN_IP)
-	#node.cmd('ip addr add %s/%s brd + dev %s' %(ip, netbit, intftemp))
-	#node.cmd('ip link set %s up' % intftemp)
-	#node.cmd('route add default gw %s %s' %(gw_ip, intftemp))
