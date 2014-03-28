@@ -285,8 +285,8 @@ def give_me_next_loopback():
 CORE_APPROACH = 'A' # It can be A or B
 
 # XXX Virtual Leased Line Configuration
-LHS_tunnel = ['euh1','euh2','euh3']#,'euh4','euh5','euh6','euh7']
-RHS_tunnel = ['euh3','euh3','euh1']#,'euh6','euh7','euh1','euh2']
+LHS_tunnel = ['euh1']#,'euh2','euh3']#,'euh4','euh5','euh6','euh7']
+RHS_tunnel = ['euh7']#,'euh3','euh1']#,'euh6','euh7','euh1','euh2']
 tunnels = []
 LHS_tunnel_aoshi = []
 RHS_tunnel_aoshi = []
