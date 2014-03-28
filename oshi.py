@@ -1,8 +1,10 @@
 #!/usr/bin/python
 
 ##############################################################################################
-# Copyright (C) 2014 Pier Luigi Ventre - (www.garr.it - Consortium GARR, www.uniroma2.it - University Of Rome Tor Vergata)
-# Copyright (C) 2014 Giuseppe Siracusano, Stefano Salsano - (www.cnit.it - CNIT, www.uniroma2.it - University Of Rome Tor Vergata)
+# Copyright (C) 2014 Pier Luigi Ventre - (Consortium GARR and University of Rome "Tor Vergata")
+# Copyright (C) 2014 Giuseppe Siracusano, Stefano Salsano - (CNIT and University of Rome "Tor Vergata")
+# www.garr.it - www.uniroma2.it/netgroup - www.cnit.it
+#
 # 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.

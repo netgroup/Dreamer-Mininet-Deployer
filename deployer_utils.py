@@ -1,8 +1,10 @@
 #!/usr/bin/python
 
 ##############################################################################################
-# Copyright (C) 2014 Pier Luigi Ventre - (www.garr.it - Consortium GARR, www.uniroma2.it - University Of Rome Tor Vergata)
-# Copyright (C) 2014 Giuseppe Siracusano, Stefano Salsano - (www.cnit.it - CNIT, www.uniroma2.it - University Of Rome Tor Vergata)
+# Copyright (C) 2014 Pier Luigi Ventre - (Consortium GARR and University of Rome "Tor Vergata")
+# Copyright (C) 2014 Giuseppe Siracusano, Stefano Salsano - (CNIT and University of Rome "Tor Vergata")
+# www.garr.it - www.uniroma2.it/netgroup - www.cnit.it
+#
 # 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,13 +18,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Implementation of OSHI Node.
+# Deployer Utils.
 #
 # @author Pier Luigi Ventre <pl.ventre@gmail.com>
 # @author Giuseppe Siracusano <a_siracusano@tin.it>
 # @author Stefano Salsano <stefano.salsano@uniroma2.it>
 #
-#/
+#
 
 from os.path import realpath
 from mininet.util import errFail, quietRun, errRun
@@ -65,3 +67,49 @@ def unmountAll( rootdir=MNRUNDIR ):
         if code != 0:
             info( '*** Warning: failed to umount', mount, '\n' )
             info( err )
+
+def fixIntf(hosts):
+	for i in range(0, len(hosts)):
+		for obj in hosts[i].nameToIntf:
+	  		if 'lo' not in obj:
+				fixNetworkManager(obj)	
+		fixNetworkManager(hosts[i])    
+	
+
+def fixNetworkManager(intf):
+	cfile = '/etc/network/interfaces'
+  	line1 = 'iface %s inet manual\n' % intf
+  	config = open( cfile ).read()
+  	if ( line1 ) not in config:
+		print '*** Adding', line1.strip(), 'to', cfile
+		with open( cfile, 'a' ) as f:
+	  		f.write( line1 )
+	  	f.close();
+
+def fixEnvironment():
+	cfile = '/etc/environment'
+  	line1 = 'VTYSH_PAGER=more\n'
+  	config = open( cfile ).read()
+  	if ( line1 ) not in config:
+		print '*** Adding', line1.strip(), 'to', cfile
+		with open( cfile, 'a' ) as f:
+	  		f.write( line1 )
+	  	f.close();
+
+def strip_number(intf):
+	intf = str(intf)
+	a = intf.split('-')
+	if len(a) > 2:
+		print "*** WARNING BAD NAME FOR INTF - EXIT"
+		sys.exit(-1)
+	return int(a[1][3:])
+
+def strip_ip(oshi):
+	for intf in oshi.nameToIntf:
+		if 'lo' not in intf:
+			if 'eth0' in intf:
+				oshi.cmd("ifconfig " + intf + " 0")
+
+
+
+

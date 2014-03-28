@@ -1,5 +1,31 @@
 #!/usr/bin/python
 
+##############################################################################################
+# Copyright (C) 2014 Pier Luigi Ventre - (Consortium GARR and University of Rome "Tor Vergata")
+# Copyright (C) 2014 Giuseppe Siracusano, Stefano Salsano - (CNIT and University of Rome "Tor Vergata")
+# www.garr.it - www.uniroma2.it/netgroup - www.cnit.it
+#
+# 
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Mininet Deployer.
+#
+# @author Pier Luigi Ventre <pl.ventre@gmail.com>
+# @author Giuseppe Siracusano <a_siracusano@tin.it>
+# @author Stefano Salsano <stefano.salsano@uniroma2.it>
+#
+#
+
 from mininet.net import Mininet
 import time
 from mininet.cli import CLI
@@ -16,8 +42,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-from oshi import OSHI
-from deployer_utils import unmountAll
+from oshi import *
+from deployer_utils import *
+from deployer_net_utils import *
+from deployer_configuration_utils import *
 
 from functools import partial
 import subprocess
@@ -27,92 +55,25 @@ import sys
 import argparse
 
 
-def fixIntf(hosts):
-	for i in range(0, len(hosts)):
-		for obj in hosts[i].nameToIntf:
-	  		if 'lo' not in obj:
-				fixNetworkManager(obj)	
-		fixNetworkManager(hosts[i])    
-	
-
-def fixNetworkManager(intf):
-	cfile = '/etc/network/interfaces'
-  	line1 = 'iface %s inet manual\n' % intf
-  	config = open( cfile ).read()
-  	if ( line1 ) not in config:
-		print '*** Adding', line1.strip(), 'to', cfile
-		with open( cfile, 'a' ) as f:
-	  		f.write( line1 )
-	  	f.close();
-
-def fixEnvironment():
-	cfile = '/etc/environment'
-  	line1 = 'VTYSH_PAGER=more\n'
-  	config = open( cfile ).read()
-  	if ( line1 ) not in config:
-		print '*** Adding', line1.strip(), 'to', cfile
-		with open( cfile, 'a' ) as f:
-	  		f.write( line1 )
-	  	f.close();
-
 aoshis = []
 oshis = []
 nets = []
 switches = []
 L2nets = []
+ctrls = []
+hosts = []
 
 # XXX Parameter 
-
 # Vll path
 vll_path = "../sdn_controller_app/vll_pusher_for_floodlights/"
 # Executable path
 path_quagga_exec = "/usr/lib/quagga/"
-# IP Parameter
-subnet = "192.168."
-netbit = 24
-# We start from 1 because in 192.168.0.0 we have the controller
-lastnet = 1
 
 # Controller Parameter
 ctrls_ip = ['192.168.0.1']
 ctrls_port = [6633]
 
-# For now unused, they are the l2 ovs controller's parameter
-# ctrl_root_ip = '127.0.0.1'
-# ctrl_root_port = 6633
-
-# Round Robin index. It will used to split up the OSHI load
-next_ctrl = 0
-
-# Set of Controller
-ctrls = []
-# Set of Hosts
-hosts = []
-
-
-sdn_subnet = "10.0."
-sdn_netbit = 24
-sdn_lastnet = 0
-last_sdn_host = 1
-
-loopback = [10, 0, None, 0]
-
-
-def give_me_next_loopback():
-	if loopback[2] == None:
-		print "Error Loopback Is Not Ready, First Add All Tunnels"
-		sys.exit(-2)
-	loopback[3] = (loopback[3] + 1) % 256
-	if loopback[3] == 0:
-		loopback[2] = (loopback[2] + 1) % 256
-		if loopback[2] == 0:
-			loopback[1] = (loopback[1] + 1) % 256
-	if loopback[1] == 255 and loopback[2] == 255 and loopback[3] == 255:
-		print "Loopback Address Sold Out"
-		sys.exit(-2)
-	return "%s.%s.%s.%s" %(loopback[0],loopback[1],loopback[2],loopback[3])
-
-# Parameter Core Approach
+# Parameter Coexistence Core Approach
 CORE_APPROACH = 'A' # It can be A or B
 
 # XXX Virtual Leased Line Configuration
@@ -130,158 +91,8 @@ ACCESS_TO_TAG = {}
 AOSHI_TO_TAG = {}
 
 verbose = True
-
-
-class L2AccessNetwork:
-
-	def __init__(self, classification):
-		self.name = "L2AccessNetwork" + str(len(L2nets) + 1);
-		self.Nodes = []
-		self.Links = []
-		self.classification = classification
-		if classification == 'A':
-			self.VlanIP = '1'
-		else:
-			self.VlanIP = '0'
-		self.intfs = []
-
-	def addLink(self, l):
-		host1 = (l.intf1.name.split('-'))[0]
-		host2 = (l.intf2.name.split('-'))[0]
-		if host1 not in self.Nodes:
-			self.Nodes.append(host1)
-		if host2 not in self.Nodes:
-			self.Nodes.append(host2)
-		self.Links.append((l.intf1.name,l.intf2.name))
-		self.intfs.append(l.intf1.name)
-		self.intfs.append(l.intf2.name)
-
-	def belong(self, name):
-		ret_intfs = []
-		for intf in self.intfs:
-			if name in intf:
-				ret_intfs.append(intf)
-		return ret_intfs
-
-	def getNextHop(self, node):
-		if node not in self.Nodes:
-			return None
-		if 'euh' in node:
-			intfToFind = "%s-eth0" % node
-			for link in self.Links:
-				if intfToFind == link[0]:
-					return ((link[1].split("-"))[0], link[0], link[1])
-				elif intfToFind == link[1]:
-					return ((link[0].split("-"))[0], link[0], link[1])
-		elif 'sw' in node:
-			intfToFind = "%s-eth1" % node
-			for link in self.Links:
-				if intfToFind == link[0]:
-					return ((link[1].split("-"))[0], link[0], link[1])
-				elif intfToFind == link[1]:
-					return ((link[0].split("-"))[0], link[0], link[1])
-		elif 'aos' in node:
-			return None
-
-	def getAoshi(self, node):
-		node = self.getNextHop(node)
-		while 'aos' not in node[0]:
-			node = self.getNextHop(node[0])
-	 	return node
-
-class OSPFNetwork: 
-	def __init__(self, intfs, ctrl, cost=1, hello_int=2, area="0.0.0.0"):
-		global lastnet
-		self.intfs = intfs
-		if lastnet >= 255:
-			print "Error, Reached 192.168.255.0"
-			sys.exit(2)
-		if ctrl:
-			self.subnet = "192.168.0."
-			self.host = 0
-		else :
-			self.subnet = (subnet + "%s.") % lastnet
-			lastnet = lastnet + 1
-			self.host = 0
-		self.cost = cost
-		self.hello_int = hello_int
-		self.area = area
-	
-	def append_intf(self, intf):
-		if intf in self.intfs:	
-			print "Discarding Append - ", intf, "Already Added"
-			return
-		self.intfs.append(intf) 
-		return
-
-	def belong(self, name):
-		ret_intfs = []
-		for intf in self.intfs:
-			if name in intf:
-				ret_intfs.append(intf)
-		return ret_intfs
-
-	def give_me_next_ip(self):
-		self.host = self.host + 1
-		if self.host >= 255:
-			print "Error, Reached " + self.subnet + ".255"
-			sys.exit(2)
-		return self.subnet + "%s" % self.host
-
-class Tunnel:
-	def __init__(self):
-		global sdn_lastnet
-		if sdn_lastnet >= 255:
-			print "Error, Reached 10.0.255.0"
-			sys.exit(2)
-		self.subnet = (sdn_subnet + "%s.") % sdn_lastnet
-		sdn_lastnet = sdn_lastnet + 1
-		self.intfs = []
-		self.host = 0
-
-	def add_intf(self, intf):
-		if intf not in self.intfs:
-			self.intfs.append(intf)
-
-	def belong(self, name):
-		if name in self.intfs:
-			return name
-		return None
-
-	def give_me_next_ip(self):
-		self.host = self.host + 1
-		if self.host >= 255:
-			print "Error, Reached " + self.subnet + ".255"
-			sys.exit(2)
-		return self.subnet + "%s" % self.host
-	  
-def configure_node(node):
-	global last_sdn_host
-	print "*** Configuring", node.name
-	strip_ip(node)
-	for net in nets:
-		intfs_to_conf = net.belong(node.name)
-		if(len(intfs_to_conf) > 0):
-			for intf_to_conf in intfs_to_conf:
-				sdn = False
-				for tunnel in tunnels:
-					if tunnel.belong(intf_to_conf) != None:
-						sdn = True
-						break
-				if sdn == False:
-					ip = net.give_me_next_ip()
-					gw_ip = (net.subnet + "%s") % 1
-					intf = intf_to_conf
-					node.cmd('ip addr add %s/%s brd + dev %s' %(ip, netbit, intf))
-					node.cmd('ip link set %s up' % intf)
-					node.cmd('route add default gw %s %s' %(gw_ip, intf))
-				else:
-					ip = tunnel.give_me_next_ip()
-					intf = intf_to_conf
-					node.cmd('ip addr add %s/%s brd + dev %s' %(ip, sdn_netbit, intf))
-					node.cmd('ip link set %s up' % intf)
-				
-def check_host():
+	  		
+def check_tunnel_configuration():
 	for i in range(0,len(LHS_tunnel)):
 		host1 = LHS_tunnel[i]
 		host2 = RHS_tunnel[i]
@@ -289,6 +100,210 @@ def check_host():
 			print "Error Misconfiguration Virtual Leased Line"
 			print "Error Cannot Connect", host1, "To", host2
 			sys.exit(2)
+
+
+def SDN_tunnel_setup_oneside(net, side):
+	global LHS_tunnel_aoshi
+	global RHS_tunnel_aoshi
+	global LHS_tunnel_port
+	global RHS_tunnel_port
+	global LHS_tunnel_vlan
+	global RHS_tunnel_vlan
+	k = 0
+	if side == 'LHS':
+		side_tunnel = LHS_tunnel
+	else:
+		side_tunnel = RHS_tunnel
+	for host in side_tunnel:
+		print "*** SDN Setup For", host
+		nextHop = None
+		i = 0
+		while host not in L2nets[i].Nodes:
+			i = i + 1
+		if i == len(L2nets):
+			print "Configuration Error"
+			print "Cannot Find The Host", host
+			sys.exit(-2)
+		print "*** %s" % host, "is in %s" % L2nets[i].name
+		done = False
+		currentNode = host
+		aoshi = L2nets[i].getAoshi(host)
+		if side == 'RHS' and aoshi[0] == LHS_tunnel_aoshi[k] and aoshi[2] == LHS_tunnel_port[k]:
+			print "*** Internal Tunnel"
+			value = LHS_tunnel_vlan[k]
+			tag = value
+		else: 
+			default = 2
+			# The Aoshi's link is the RHS
+			value = AOSHI_TO_TAG.get(aoshi[2], default)
+			tag = value
+			AOSHI_TO_TAG[aoshi[2]] = value + 1
+		print "*** VLAN Tag", tag
+		while done == False:
+			nextNode = L2nets[i].getNextHop(currentNode)
+			if 'euh' in currentNode and 'sw' in nextNode[0]:
+				rhs_new_link = net.getNodeByName(nextNode[0])				
+				lhs_new_link = net.getNodeByName(currentNode)
+				l = net.addLink(lhs_new_link, rhs_new_link)
+				tunnels[k].add_intf(l.intf1.name)
+				# l.intf1 contains the NextHop's new port
+				ACCESS_TO_TAG[l.intf2.name] = str(tag) + ","
+				z = 0
+				for network in nets:
+					if len(network.belong(currentNode)) > 0:
+						break
+					z  = z + 1
+				if z == len(nets):
+					print "Configuration Error"
+					print "Cannot Find The Host", currentNode, "In The OSPF Networks"
+					sys.exit(-2)
+				network.append_intf(l.intf1.name)
+				currentNode = nextNode[0]
+			elif 'sw' in currentNode:
+				# NextNode[1] contains the currentNode's port
+				default = ""
+				tags = (TRUNK_TO_TAG.get(nextNode[1], default)).split(',')
+				if str(tag) not in tags:
+					TRUNK_TO_TAG[nextNode[1]] = TRUNK_TO_TAG.get(nextNode[1], default) + str(tag) + ","
+				if 'aos' in nextNode[0]:
+					aoshi = net.getNodeByName(nextNode[0])
+					if side == 'LHS':
+						LHS_tunnel_aoshi.append(aoshi.name)
+						LHS_tunnel_port.append(nextNode[2])
+						LHS_tunnel_vlan.append(tag)
+					else:
+						RHS_tunnel_aoshi.append(aoshi.name)
+						RHS_tunnel_port.append(nextNode[2])
+						RHS_tunnel_vlan.append(tag)
+					done = True
+				elif 'sw' in nextNode[0]:
+					# NextNode[1] contains the nextHop's port
+					tags = (TRUNK_TO_TAG.get(nextNode[2], default)).split(',')
+					if str(tag) not in tags:
+						TRUNK_TO_TAG[nextNode[2]] = TRUNK_TO_TAG.get(nextNode[2], default) + str(tag) + ","
+				currentNode = nextNode[0]
+			else:
+				print "Error In The Network Configuration"
+				print "Tunnel Setup Cannot Work Properly"
+				sys.exit(-2)
+		k = k + 1
+
+def SDN_tunnel_setup(net):
+	print "*** L2 Access Networks SDN Setup"
+	print "*** SDN Setup For LHS"
+	SDN_tunnel_setup_oneside(net, 'LHS')
+	print "*** SDN Setup For RHS"
+	SDN_tunnel_setup_oneside(net, 'RHS')
+		
+def IP_tunnel_setup():
+	print "*** L2 Access Networks IP Setup"
+	for host in hosts:
+		print "*** IP Setup For", host
+		nextHop = None
+		i = 0
+		while host not in L2nets[i].Nodes:
+			i = i + 1
+		if i == len(L2nets):
+			print "Configuration Error"
+			print "Cannot Find The Host", host
+			sys.exit(-2)
+		print "*** %s" % host, "is in %s" % L2nets[i].name
+		done = False
+		currentNode = host
+		tag = L2nets[i].VlanIP
+		while done == False:
+			nextNode = L2nets[i].getNextHop(currentNode)
+			if 'euh' in currentNode and 'sw' in nextNode[0]:
+				# NextNode[1] contains the Link's LHS
+				# ACCESS PORT is the RHS
+				ACCESS_TO_TAG[nextNode[2]] = tag + ","
+				currentNode = nextNode[0]
+			elif 'sw' in currentNode:
+				# NextNode[1] contains the Link's LHS
+				default = ""
+				tags = (TRUNK_TO_TAG.get(nextNode[1], default)).split(',')
+				if tag not in tags:
+					TRUNK_TO_TAG[nextNode[1]] = TRUNK_TO_TAG.get(nextNode[1], default) + tag + ","
+				if 'aos' in nextNode[0]:
+					done = True
+				elif 'sw' in nextNode[0]:
+					tags = (TRUNK_TO_TAG.get(nextNode[2], default)).split(',')
+					if tag not in tags:
+						TRUNK_TO_TAG[nextNode[2]] = TRUNK_TO_TAG.get(nextNode[2], default) + tag + ","
+				currentNode = nextNode[0]
+			else:
+				print "Error In The Network Configuration"
+				print "Tunnel Setup Cannot Work Properly"
+				sys.exit(-2)
+
+def configure_l2_accessnetwork():
+	print "*** Configure L2 Access Networks"
+	root = Node( 'root', inNamespace=False )
+	print "*** Configure L2 Access Ports" 
+	for key, value in ACCESS_TO_TAG.iteritems():
+		print "*** Configure", key, "As Access Port, TAG=", value
+		root.cmd("ovs-vsctl set port %s tag=%s" %(key, value))
+	print "*** Configure L2 Trunk Ports"
+	for key, value in TRUNK_TO_TAG.iteritems():
+		print "*** Configure", key, "As Trunk Port, TAG=", value
+		root.cmd("ovs-vsctl set port %s trunks=%s" %(key, value))
+			
+def create_access_network(net):
+	print "*** Create Access Networks"
+	global nets
+	global oshis
+	global aoshis
+	OSHI = len(oshis)
+	for i in range(OSHI, (2*OSHI)):
+		aoshi = (net.addHost('aos%s' % (i+1)))
+		l = net.addLink(aoshi, oshis[i % OSHI])
+		nets.append(OSPFNetwork(intfs=[l.intf1.name,l.intf2.name], ctrl=False))
+		print "*** Connect", aoshi, "To", oshis[i % OSHI]
+		create_l2_access_network(aoshi, net)   
+		aoshis.append(aoshi)
+
+def create_l2_access_network(aoshi, net, n_host=1):
+	global switches
+	global hosts
+	global L2nets
+	name = "L2AccessNetwork" + str(len(L2nets) + 1);
+	l2net = L2AccessNetwork(name, classification = 'B')
+	print "*** Create L2 Access Network For", aoshi.name
+	intfs = []
+	hosts_in_rn = []
+	print "*** Create L2 Switch"
+	next = len(switches)
+	sw = net.addSwitch("sw%s" % (next+1))
+	print "*** Create Switch", sw.name
+	hosts_in_rn.append(sw)
+	l = net.addLink(sw, aoshi)
+	print "*** Connect", sw, "To", aoshi
+	l2net.addLink(l)
+	intfs.append(l.intf2.name)
+	switches.append(sw)
+
+	# Create Another L2 Switch
+	# temp = sw
+	# next = len(switches)
+	# print "*** Create Switch", sw.name
+	# sw = net.addSwitch("sw%s" % (next+1))
+	# hosts_in_rn.append(sw)
+	# l = net.addLink(sw, temp)
+	# print "*** Connect", sw, "To", temp
+	# l2net.addLink(l)
+	# switches.append(sw)
+
+	print "*** Create End User Hosts"
+	for i in range(len(hosts), (len(hosts) + n_host)):
+		host = net.addHost(('euh%s') % (i+1))
+		l = net.addLink(host,sw)
+		l2net.addLink(l)
+		print "*** Connect", host, "To", sw
+		hosts.append(host.name)
+		intfs.append(l.intf1.name)
+	nets.append(OSPFNetwork(intfs, ctrl=False, hello_int=2))
+	fixIntf(hosts_in_rn)
+	L2nets.append(l2net)
 
 def buildTopoFromFile(param):
 	global oshis
@@ -387,7 +402,8 @@ def buildTopoFromFile(param):
 		print "*** Create Acces Networks Switched"
 	for l2subnet in l2subnets:
 		if l2subnet.type == "ACCESS":
-			l2net = L2AccessNetwork(classification = 'B')
+			name = "L2AccessNetwork" + str(len(L2nets) + 1);
+			l2net = L2AccessNetwork(name, classification = 'B')
 			if verbose:
 				print "*** Subnet: Node %s - Links %s" % (l2subnet.nodes, l2subnet.links)
 				print "*** Create L2 Access Network - Classification", l2net.classification	
@@ -428,7 +444,7 @@ def buildTopoFromFile(param):
 	fixIntf(hosts_in_rn)
 
 	# Utility function		
-	check_host()
+	check_tunnel_configuration()
 	
 	for i in range(0, len(LHS_tunnel)):
 		tunnels.append(Tunnel())
@@ -468,9 +484,6 @@ def buildTopoFromFile(param):
 	for network in nets:
 		print "*** OSPF Network:", network.subnet + "0,", str(network.intfs) + ",", "cost %s," % network.cost, "hello interval %s," % network.hello_int
 	return net
-
-
-
 	
 def Mesh(OSHI_n=4):
 	global ctrls
@@ -512,7 +525,7 @@ def Mesh(OSHI_n=4):
 	create_access_network(net)
 
 	# Utility function		
-	check_host()
+	check_tunnel_configuration()
 	
 	for i in range(0, len(LHS_tunnel)):
 		tunnels.append(Tunnel())
@@ -620,224 +633,7 @@ def topo_from_nx(topo, args):
 			args[0] = 5
 			args[1] = 0.8
 		print "Erdos Renyi", "Nodes %s " % args[0], "Interconnection Probability %s" % args[1]
-		return erdos_renyi_from_nx(args[0], args[1])
-
-def SDN_tunnel_setup_oneside(net, side):
-	global LHS_tunnel_aoshi
-	global RHS_tunnel_aoshi
-	global LHS_tunnel_port
-	global RHS_tunnel_port
-	global LHS_tunnel_vlan
-	global RHS_tunnel_vlan
-	k = 0
-	if side == 'LHS':
-		side_tunnel = LHS_tunnel
-	else:
-		side_tunnel = RHS_tunnel
-	for host in side_tunnel:
-		print "*** SDN Setup For", host
-		nextHop = None
-		i = 0
-		while host not in L2nets[i].Nodes:
-			i = i + 1
-		if i == len(L2nets):
-			print "Configuration Error"
-			print "Cannot Find The Host", host
-			sys.exit(-2)
-		print "*** %s" % host, "is in %s" % L2nets[i].name
-		done = False
-		currentNode = host
-		aoshi = L2nets[i].getAoshi(host)
-		if side == 'RHS' and aoshi[0] == LHS_tunnel_aoshi[k] and aoshi[2] == LHS_tunnel_port[k]:
-			print "*** Internal Tunnel"
-			value = LHS_tunnel_vlan[k]
-			tag = value
-		else: 
-			default = 2
-			# The Aoshi's link is the RHS
-			value = AOSHI_TO_TAG.get(aoshi[2], default)
-			tag = value
-			AOSHI_TO_TAG[aoshi[2]] = value + 1
-		print "*** VLAN Tag", tag
-		while done == False:
-			nextNode = L2nets[i].getNextHop(currentNode)
-			if 'euh' in currentNode and 'sw' in nextNode[0]:
-				rhs_new_link = net.getNodeByName(nextNode[0])				
-				lhs_new_link = net.getNodeByName(currentNode)
-				l = net.addLink(lhs_new_link, rhs_new_link)
-				tunnels[k].add_intf(l.intf1.name)
-				# l.intf1 contains the NextHop's new port
-				ACCESS_TO_TAG[l.intf2.name] = str(tag) + ","
-				z = 0
-				for network in nets:
-					if len(network.belong(currentNode)) > 0:
-						break
-					z  = z + 1
-				if z == len(nets):
-					print "Configuration Error"
-					print "Cannot Find The Host", currentNode, "In The OSPF Networks"
-					sys.exit(-2)
-				network.append_intf(l.intf1.name)
-				currentNode = nextNode[0]
-			elif 'sw' in currentNode:
-				# NextNode[1] contains the currentNode's port
-				default = ""
-				tags = (TRUNK_TO_TAG.get(nextNode[1], default)).split(',')
-				if str(tag) not in tags:
-					TRUNK_TO_TAG[nextNode[1]] = TRUNK_TO_TAG.get(nextNode[1], default) + str(tag) + ","
-				if 'aos' in nextNode[0]:
-					aoshi = net.getNodeByName(nextNode[0])
-					if side == 'LHS':
-						LHS_tunnel_aoshi.append(aoshi.name)
-						LHS_tunnel_port.append(nextNode[2])
-						LHS_tunnel_vlan.append(tag)
-					else:
-						RHS_tunnel_aoshi.append(aoshi.name)
-						RHS_tunnel_port.append(nextNode[2])
-						RHS_tunnel_vlan.append(tag)
-					done = True
-				elif 'sw' in nextNode[0]:
-					# NextNode[1] contains the nextHop's port
-					tags = (TRUNK_TO_TAG.get(nextNode[2], default)).split(',')
-					if str(tag) not in tags:
-						TRUNK_TO_TAG[nextNode[2]] = TRUNK_TO_TAG.get(nextNode[2], default) + str(tag) + ","
-				currentNode = nextNode[0]
-			else:
-				print "Error In The Network Configuration"
-				print "Tunnel Setup Cannot Work Properly"
-				sys.exit(-2)
-		k = k + 1
-
-def SDN_tunnel_setup(net):
-	print "*** L2 Access Networks SDN Setup"
-	print "*** SDN Setup For LHS"
-	SDN_tunnel_setup_oneside(net, 'LHS')
-	print "*** SDN Setup For RHS"
-	SDN_tunnel_setup_oneside(net, 'RHS')
-		
-
-def IP_tunnel_setup():
-	print "*** L2 Access Networks IP Setup"
-	for host in hosts:
-		print "*** IP Setup For", host
-		nextHop = None
-		i = 0
-		while host not in L2nets[i].Nodes:
-			i = i + 1
-		if i == len(L2nets):
-			print "Configuration Error"
-			print "Cannot Find The Host", host
-			sys.exit(-2)
-		print "*** %s" % host, "is in %s" % L2nets[i].name
-		done = False
-		currentNode = host
-		tag = L2nets[i].VlanIP
-		while done == False:
-			nextNode = L2nets[i].getNextHop(currentNode)
-			if 'euh' in currentNode and 'sw' in nextNode[0]:
-				# NextNode[1] contains the Link's LHS
-				# ACCESS PORT is the RHS
-				ACCESS_TO_TAG[nextNode[2]] = tag + ","
-				currentNode = nextNode[0]
-			elif 'sw' in currentNode:
-				# NextNode[1] contains the Link's LHS
-				default = ""
-				tags = (TRUNK_TO_TAG.get(nextNode[1], default)).split(',')
-				if tag not in tags:
-					TRUNK_TO_TAG[nextNode[1]] = TRUNK_TO_TAG.get(nextNode[1], default) + tag + ","
-				if 'aos' in nextNode[0]:
-					done = True
-				elif 'sw' in nextNode[0]:
-					tags = (TRUNK_TO_TAG.get(nextNode[2], default)).split(',')
-					if tag not in tags:
-						TRUNK_TO_TAG[nextNode[2]] = TRUNK_TO_TAG.get(nextNode[2], default) + tag + ","
-				currentNode = nextNode[0]
-			else:
-				print "Error In The Network Configuration"
-				print "Tunnel Setup Cannot Work Properly"
-				sys.exit(-2)
-
-def configure_l2_accessnetwork():
-	print "*** Configure L2 Access Networks"
-	root = Node( 'root', inNamespace=False )
-	print "*** Configure L2 Access Ports" 
-	for key, value in ACCESS_TO_TAG.iteritems():
-		print "*** Configure", key, "As Access Port, TAG=", value
-		root.cmd("ovs-vsctl set port %s tag=%s" %(key, value))
-	print "*** Configure L2 Trunk Ports"
-	for key, value in TRUNK_TO_TAG.iteritems():
-		print "*** Configure", key, "As Trunk Port, TAG=", value
-		root.cmd("ovs-vsctl set port %s trunks=%s" %(key, value))
-			
-def create_access_network(net):
-	print "*** Create Access Networks"
-	global nets
-	global oshis
-	global aoshis
-	OSHI = len(oshis)
-	for i in range(OSHI, (2*OSHI)):
-		aoshi = (net.addHost('aos%s' % (i+1)))
-		l = net.addLink(aoshi, oshis[i % OSHI])
-		nets.append(OSPFNetwork(intfs=[l.intf1.name,l.intf2.name], ctrl=False))
-		print "*** Connect", aoshi, "To", oshis[i % OSHI]
-		create_l2_access_network(aoshi, net)   
-		aoshis.append(aoshi)
-
-def create_l2_access_network(aoshi, net, n_host=1):
-	global switches
-	global hosts
-	global L2nets
-	l2net = L2AccessNetwork(classification = 'B')
-	print "*** Create L2 Access Network For", aoshi.name
-	intfs = []
-	hosts_in_rn = []
-	print "*** Create L2 Switch"
-	next = len(switches)
-	sw = net.addSwitch("sw%s" % (next+1))
-	print "*** Create Switch", sw.name
-	hosts_in_rn.append(sw)
-	l = net.addLink(sw, aoshi)
-	print "*** Connect", sw, "To", aoshi
-	l2net.addLink(l)
-	intfs.append(l.intf2.name)
-	switches.append(sw)
-
-	# Create Another L2 Switch
-	# temp = sw
-	# next = len(switches)
-	# print "*** Create Switch", sw.name
-	# sw = net.addSwitch("sw%s" % (next+1))
-	# hosts_in_rn.append(sw)
-	# l = net.addLink(sw, temp)
-	# print "*** Connect", sw, "To", temp
-	# l2net.addLink(l)
-	# switches.append(sw)
-
-	print "*** Create End User Hosts"
-	for i in range(len(hosts), (len(hosts) + n_host)):
-		host = net.addHost(('euh%s') % (i+1))
-		l = net.addLink(host,sw)
-		l2net.addLink(l)
-		print "*** Connect", host, "To", sw
-		hosts.append(host.name)
-		intfs.append(l.intf1.name)
-	nets.append(OSPFNetwork(intfs, ctrl=False, hello_int=2))
-	fixIntf(hosts_in_rn)
-	L2nets.append(l2net)	
-
-def strip_number(intf):
-	intf = str(intf)
-	a = intf.split('-')
-	if len(a) > 2:
-		print "*** WARNING BAD NAME FOR INTF - EXIT"
-		sys.exit(-1)
-	return int(a[1][3:])
-
-def strip_ip(oshi):
-	for intf in oshi.nameToIntf:
-		if 'lo' not in intf:
-			if 'eth0' in intf:
-				oshi.cmd("ifconfig " + intf + " 0")	
+		return erdos_renyi_from_nx(args[0], args[1])		
 
 def configure_env_oshi(oshi):
 	global next_ctrl
@@ -872,6 +668,32 @@ def configure_env_ctrl(ctrl):
 	for intf in ctrl.nameToIntf:
 		cmd = "echo 0 > /proc/sys/net/ipv4/conf/" + intf + "/rp_filter"
 		ctrl.cmd(cmd)
+
+def configure_node(node):
+	global last_sdn_host
+	print "*** Configuring", node.name
+	strip_ip(node)
+	for net in nets:
+		intfs_to_conf = net.belong(node.name)
+		if(len(intfs_to_conf) > 0):
+			for intf_to_conf in intfs_to_conf:
+				sdn = False
+				for tunnel in tunnels:
+					if tunnel.belong(intf_to_conf) != None:
+						sdn = True
+						break
+				if sdn == False:
+					ip = net.give_me_next_ip()
+					gw_ip = (net.subnet + "%s") % 1
+					intf = intf_to_conf
+					node.cmd('ip addr add %s/%s brd + dev %s' %(ip, netbit, intf))
+					node.cmd('ip link set %s up' % intf)
+					node.cmd('route add default gw %s %s' %(gw_ip, intf))
+				else:
+					ip = tunnel.give_me_next_ip()
+					intf = intf_to_conf
+					node.cmd('ip addr add %s/%s brd + dev %s' %(ip, sdn_netbit, intf))
+					node.cmd('ip link set %s up' % intf)
 
 def configure_ovs(oshi, ctrl_ip, ctrl_port):
 	print "*** Configuring OVS For", oshi.name
@@ -930,9 +752,9 @@ def conf_flows_ingress_egress_vlan_approach(oshi, i, intf):
 		print "*** Add Rules For Vlan Access Approach"
 		VLAN_IP = L2nets[i].VlanIP	
 		eth_intf = intf
-		eth_port_number = convert_port_name_to_number(oshi.name, eth_intf)
+		eth_port_number = convert_port_name_to_number(oshi, eth_intf)
 		vi_intf = "vi%s" % strip_number(eth_intf)
-		vi_port_number = convert_port_name_to_number(oshi.name, vi_intf)
+		vi_port_number = convert_port_name_to_number(oshi, vi_intf)
 		oshi.cmd("ovs-ofctl add-flow br-%s \"table=0,hard_timeout=0,priority=300,in_port=%s,dl_vlan=%s,actions=strip_vlan,resubmit(,1)\"" % (oshi.name, eth_port_number,VLAN_IP))
 		oshi.cmd("ovs-ofctl add-flow br-%s \"table=1,hard_timeout=0,priority=300,in_port=%s,actions=mod_vlan_vid:%s,output:%s\"" % (oshi.name,vi_port_number,VLAN_IP,eth_port_number))
 
@@ -943,9 +765,9 @@ def conf_flows_ingress_egress_no_vlan_approach(oshi, i, intf):
 		print "*** Add Rule For No Vlan Access Approach"
 		VLAN_IP = 1 # Core Vlan	
 		eth_intf = intf
-		eth_port_number = convert_port_name_to_number(oshi.name, eth_intf)
+		eth_port_number = convert_port_name_to_number(oshi, eth_intf)
 		vi_intf = "vi%s" % strip_number(eth_intf)
-		vi_port_number = convert_port_name_to_number(oshi.name, vi_intf)
+		vi_port_number = convert_port_name_to_number(oshi, vi_intf)
 		oshi.cmd("ovs-ofctl del-flows br-%s in_port=%s,dl_vlan=%s" % (oshi.name,eth_port_number,VLAN_IP))
 		oshi.cmd("ovs-ofctl add-flow br-%s hard_timeout=0,priority=300,in_port=%s,dl_vlan=%s,actions=mod_vlan_vid:%s,output:%s" % (oshi.name,eth_port_number,"0xffff",VLAN_IP,vi_port_number))
 		oshi.cmd("ovs-ofctl add-flow br-%s hard_timeout=0,priority=300,in_port=%s,dl_vlan=%s,actions=strip_vlan,output:%s" % (oshi.name,vi_port_number,VLAN_IP,eth_port_number)) 
@@ -1044,19 +866,6 @@ def configure_ospf_no_vlan_approach(oshi, intfname):
 	oshi.cmd('ip link set %s up' % intfname)
 	return intfname
 
-def configure_standalone_sw():
-	print "*** Configuring L2 Switches"
-	root = Node( 'root', inNamespace=False )
-	for sw in switches:
-		print "*** Configuring", sw.name, "As Learning Switch"
-		root.cmd("ovs-vsctl set-fail-mode %s standalone" % sw.name)
-		#root.cmdPrint("ovs-ofctl add-flow %s hard_timeout=0,priority=300,action=all" % sw.name)
-
-def convert_port_name_to_number(name, port):
-	Node = net.getNodeByName(name)
-	p = Node.cmd("ovs-ofctl dump-ports-desc br-%s | grep %s |awk -F '(' '{print $1}'| cut -d ' ' -f 2" %(name, port ))
-	return str(int(p))
-
 def configure_vll_pusher():
 	print "*** Create Configuration File For Vll Pusher"
 	path = vll_path + "vll_pusher.cfg"
@@ -1064,16 +873,14 @@ def configure_vll_pusher():
 	for i in range(0, len(LHS_tunnel_aoshi)):
 		aoshi = LHS_tunnel_aoshi[i]
 		port = LHS_tunnel_port[i]
-		lhs_port = port #convert_port_name_to_number(aoshi, port)
+		lhs_port = port
 		aoshi = RHS_tunnel_aoshi[i]
 		port = RHS_tunnel_port[i]
-		rhs_port = port #convert_port_name_to_number(aoshi, port)
+		rhs_port = port
 		vll_pusher_cfg.write("%s|%s|%s|%s|%d|%d|\n" % (LHS_tunnel_aoshi[i], RHS_tunnel_aoshi[i], lhs_port, rhs_port, LHS_tunnel_vlan[i], RHS_tunnel_vlan[i]))
 	vll_pusher_cfg.close()
 	root = Node( 'root', inNamespace=False )
 	root.cmd("chmod 777 %s" %(path))
-
-	
 	
 def init_net(net):
 	"Init Function"
@@ -1115,7 +922,7 @@ def init_net(net):
 	for i in range(len(hosts)):
 		host = net.getNodeByName(hosts[i])
 		configure_node(host)
-	configure_standalone_sw()
+	configure_standalone_sw(switches)
 	configure_l2_accessnetwork()
 	# Configure VLL Pusher
 	configure_vll_pusher()
@@ -1155,6 +962,9 @@ def parse_cmd_line():
 
 def check_precond():
 	unmountAll()
+	if vll_path == "" or path_quagga_exec == "":
+		print "Error Set Environment Variable At The Beginning Of File"
+		sys.exit(-2)
 
 
 if __name__ == '__main__':
