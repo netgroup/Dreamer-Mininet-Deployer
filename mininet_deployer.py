@@ -567,12 +567,16 @@ def Mesh(OSHI_n=4):
 def erdos_renyi_from_nx(n, p):
 	g = nx.erdos_renyi_graph(n,p)
 	global ctrls
+	global oshis
+	global aoshis
+	global SDN_PORTS
+	global TUNNEL_SETUP
 	"Create An Erdos Reny Topo"
 	"Creating OSHI"
 	net = Mininet( controller=RemoteController, switch=OVSKernelSwitch, host=OSHI, build=False )
 	i = 0
 	h = 0
-	# This is the basic behavior, but we have to modify it in order to creare switched networks
+	# This is the basic behavior, with nx we create only the core network
 	for n in g.nodes():
 		n = n + 1
 		oshi = (net.addHost('osh%s' % (n)))
@@ -590,6 +594,7 @@ def erdos_renyi_from_nx(n, p):
 	c1 = RemoteController( 'c1', ip=ctrls_ip[0], port=ctrls_port[0])
 	ctrls.append(c1)
 	hosts_in_rn.append(c1)
+
 	# Connecting the controller to the network 
 	print "*** Connect %s" % oshi," To c1"
 	l = net.addLink(oshi, c1)
@@ -597,6 +602,47 @@ def erdos_renyi_from_nx(n, p):
 	
 	# Only needed for hosts in root namespace
 	fixIntf(hosts_in_rn)
+	
+	# Utility function
+	create_access_network(net)
+
+	# Utility function		
+	check_tunnel_configuration()
+	
+	for i in range(0, len(LHS_tunnel)):
+		tunnels.append(Tunnel())
+
+	loopback[2]=sdn_lastnet
+
+	print "*** Loopback Address Start From:", loopback 
+	print "*** Tunnels LHS:", LHS_tunnel
+	print "*** Tunnels RHS:", RHS_tunnel
+
+	# Tunnels Setup
+	IP_tunnel_setup()
+	SDN_tunnel_setup(net)
+
+	i = 0
+	for tunnel in tunnels :	
+		print "*** Tunnel %d, Subnet %s0, Intfs %s" % (i+1, tunnel.subnet, tunnel.intfs)
+		i = i + 1
+
+	i = 0
+	for l2net in L2nets:
+		print "***", l2net.name
+		print "*** Nodes:", l2net.Nodes
+		print "*** Links:", l2net.Links
+		print "*** Intfs:", l2net.intfs
+		i = i + 1
+	
+	print "*** AOSHI Tag:", AOSHI_TO_TAG
+	print "*** Trunk Port Configuration:", TRUNK_TO_TAG
+	print "*** Access Port Configuration:", ACCESS_TO_TAG
+	print "*** LHS AOSHI:", LHS_tunnel_aoshi
+	print "*** RHS AOSHI:", RHS_tunnel_aoshi
+	print "*** LHS Port:", LHS_tunnel_port
+	print "*** RHS Port:", RHS_tunnel_port
+
 
 	for network in nets:
 		print "*** Create Network:", network.subnet + "0,", str(network.intfs) + ",", "cost %s," % network.cost, "hello interval %s," % network.hello_int
@@ -608,21 +654,12 @@ def erdos_renyi_from_nx(n, p):
 
 	return net
 
-def topo_from_nx(topo, args):
-	if topo == 'bt':
-		if len(args) > 2:
-			if args [0] > 10 or args[1] > 10:
-				print "Warning Parameter Too High For Balanced Tree", "Fanout %s" % args[0], "Depth %s" % args[1]
-				print "Using Default Parameter"
-				args[0] = 2
-				args[1] = 2
-		else :
-			args[0] = 2
-			args[1] = 2	 
-		print "Balanced Tree", "Fanout %s" % args[0], "Depth %s" % args[1]
-		return balanced_tree_from_nx(args[0], args[1])
-	
-	elif topo == 'er':
+def buildTopoFromNx(topo, args):
+	if topo == 'e_r':
+		data = args.split(",")
+		args = []
+		args.append(int(data[0]))
+		args.append(float(data[1]))
 		if len(args) >= 2:
 			if args [0] > 10 or args[1] > 1:
 				print "Warning Parameter Too High For Erdos Renyi", "Nodes %s" % args[0], "Interconnection Probability %s" % args[1]
@@ -632,8 +669,11 @@ def topo_from_nx(topo, args):
 		else :
 			args[0] = 5
 			args[1] = 0.8
-		print "Erdos Renyi", "Nodes %s " % args[0], "Interconnection Probability %s" % args[1]
-		return erdos_renyi_from_nx(args[0], args[1])		
+		print "Erdos Renyi", "Nodes %s" % args[0], "Interconnection Probability %s" % args[1]
+		return erdos_renyi_from_nx(args[0], args[1])
+
+	print "Error NX Wrong Parameter"
+	sys.exit(-2) 		
 
 def configure_env_oshi(oshi):
 	global next_ctrl
@@ -980,6 +1020,6 @@ if __name__ == '__main__':
 		print "*** Create Built-in Topology mesh[%s]" % param
 		net = Mesh(int(param))
 	else:
-		print "Error Unrecognized Topology"
-		sys.exit(-2)
+		print "*** Create Topology From Networkx:", topo, param
+		net = buildTopoFromNx(topo,param)
 	init_net(net)
