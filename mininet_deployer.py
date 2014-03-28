@@ -65,9 +65,9 @@ hosts = []
 
 # XXX Parameter 
 # Vll path
-vll_path = "../sdn_controller_app/vll_pusher_for_floodlights/"
+vll_path = "" #"../sdn_controller_app/vll_pusher_for_floodlights/"
 # Executable path
-path_quagga_exec = "/usr/lib/quagga/"
+path_quagga_exec = "" #"/usr/lib/quagga/"
 
 # Controller Parameter
 ctrls_ip = ['192.168.0.1']

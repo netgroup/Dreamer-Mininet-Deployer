@@ -15,6 +15,10 @@ Tips
 ==============
 
 Set Environment Variable At The Beginning of mininet_deployer.py
+(vll_path, quagga_exec)
+
+When you choose the build of Topology from json file, the topology
+must be saved in topo folder
 
 When you use networkx the topo's png is saved in topo.png
 
@@ -41,6 +45,6 @@ optional arguments:
 
 		1)In order to use the built-in topology mesh[x] -> mesh:3
 
-		2)In order to use the topology topo.json in /topo/ -> file:topo.json
+		2)In order to use the topology topo.json in ./topo/ -> file:topo.json
 
 		3)In order to use random generation of networkx e-r:n,p (i.e number of core nodes, interconnection probability)
