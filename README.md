@@ -52,4 +52,11 @@ optional arguments:
 
 		2)In order to use the topology topo.json in ./topo/ -> file:topo.json
 
-		3)In order to use random generation of networkx e-r:n,p (i.e number of core nodes, interconnection probability)
+		3)In order to use random generation of networkx e-r:n,p (i.e core nodes, connection probability)
+		
+Warning
+========
+
+1) We test our script on UBUNTU 13.04;
+
+2) If you use a controller, you have to disable the deletion of rules at switch connection and any forwarding modules;
