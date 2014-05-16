@@ -26,24 +26,17 @@
 #
 #
 
-sdn_subnet = "10.0."
+sdn_subnet = [10, 0, 0, 0]
 sdn_netbit = 24
-sdn_lastnet = 0
-last_sdn_host = 1
-loopback = [10, 0, None, 0]
+loopback = [172, 168, 0, 0]
 # IP Parameter
-subnet = "192.168."
-netbit = 24
-# We start from 1 because in 192.168.0.0 we have the controller
-lastnet = 1
+ip_subnet = [192, 168, 0, 0]
+ip_netbit = 24
 # Round Robin index. It will used to split up the OSHI load
 next_ctrl = 0
 
 
 def give_me_next_loopback():
-	if loopback[2] == None:
-		print "Error Loopback Is Not Ready, First Add All Tunnels"
-		sys.exit(-2)
 	loopback[3] = (loopback[3] + 1) % 256
 	if loopback[3] == 0:
 		loopback[2] = (loopback[2] + 1) % 256
@@ -53,6 +46,24 @@ def give_me_next_loopback():
 		print "Loopback Address Sold Out"
 		sys.exit(-2)
 	return "%s.%s.%s.%s" %(loopback[0],loopback[1],loopback[2],loopback[3])
+
+def give_me_next_ospf_net():
+	global ip_subnet
+	ip_subnet[2] = (ip_subnet[2] + 1) % 256
+	if ip_subnet[2] == 0:
+		print "Ip Subnet Address Sold Out"
+		sys.exit(-2)
+	return [ip_subnet[0], ip_subnet[1], ip_subnet[2], ip_subnet[3]]
+
+def give_me_next_sdn_net():
+	global sdn_subnet
+	sdn_subnet[2] = (sdn_subnet[2] + 1) % 256
+	if sdn_subnet[2] == 0:
+		sdn_subnet[1] = (sdn_subnet[1] + 1) % 256
+	if sdn_subnet[1] == 255 and sdn_subnet[2] == 255:
+		print "SDN Subnet Address Sold Out"
+		sys.exit(-2)
+	return [sdn_subnet[0], sdn_subnet[1], sdn_subnet[2], sdn_subnet[3]]
 
 
 class L2AccessNetwork:
@@ -114,18 +125,11 @@ class L2AccessNetwork:
 
 class OSPFNetwork: 
 	def __init__(self, intfs, ctrl, cost=1, hello_int=2, area="0.0.0.0"):
-		global lastnet
 		self.intfs = intfs
-		if lastnet >= 255:
-			print "Error, Reached 192.168.255.0"
-			sys.exit(2)
 		if ctrl:
-			self.subnet = "192.168.0."
-			self.host = 0
+			self.subnet = [192, 168, 0, 0]
 		else :
-			self.subnet = (subnet + "%s.") % lastnet
-			lastnet = lastnet + 1
-			self.host = 0
+			self.subnet = give_me_next_ospf_net()
 		self.cost = cost
 		self.hello_int = hello_int
 		self.area = area
@@ -145,22 +149,16 @@ class OSPFNetwork:
 		return ret_intfs
 
 	def give_me_next_ip(self):
-		self.host = self.host + 1
-		if self.host >= 255:
-			print "Error, Reached " + self.subnet + ".255"
+		self.subnet[3] = self.subnet[3] + 1
+		if self.subnet == 255:
+			print "Error, Reached " + self.subnet
 			sys.exit(2)
-		return self.subnet + "%s" % self.host
+		return "%s.%s.%s.%s" % (self.subnet[0], self.subnet[1], self.subnet[2], self.subnet[3])
 
 class Tunnel:
 	def __init__(self):
-		global sdn_lastnet
-		if sdn_lastnet >= 255:
-			print "Error, Reached 10.0.255.0"
-			sys.exit(2)
-		self.subnet = (sdn_subnet + "%s.") % sdn_lastnet
-		sdn_lastnet = sdn_lastnet + 1
+		self.subnet = give_me_next_sdn_net()
 		self.intfs = []
-		self.host = 0
 
 	def add_intf(self, intf):
 		if intf not in self.intfs:
@@ -172,8 +170,8 @@ class Tunnel:
 		return None
 
 	def give_me_next_ip(self):
-		self.host = self.host + 1
-		if self.host >= 255:
-			print "Error, Reached " + self.subnet + ".255"
+		self.subnet[3] = self.subnet[3] + 1
+		if self.subnet == 255:
+			print "Error, Reached " + self.subnet
 			sys.exit(2)
-		return self.subnet + "%s" % self.host
+		return "%s.%s.%s.%s" % (self.subnet[0], self.subnet[1], self.subnet[2], self.subnet[3])

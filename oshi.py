@@ -47,12 +47,12 @@ class OSHI( Host ):
     mnRunDir = MNRUNDIR
     dpidLen = 16
 
-    def __init__(self, name, dpid=None, *args, **kwargs ):
+    def __init__(self, name, loopback, *args, **kwargs ):
         """privateDirs: list of private directories
-           remounts: dirs to remount
-           unmount: unmount dirs in cleanup? (True)
-           Note: if unmount is False, you must call unmountAll()
-           manually."""
+        remounts: dirs to remount
+        unmount: unmount dirs in cleanup? (True)
+        Note: if unmount is False, you must call unmountAll()
+        manually."""
         self.privateDirs = [ '/var/log/', '/var/log/quagga', '/var/run', '/var/run/quagga', '/var/run/openvswitch']
         self.remounts = findRemounts( fstypes=[ 'devpts' ] )
         self.unmount = False
@@ -68,15 +68,25 @@ class OSHI( Host ):
         # Now we chroot and cd to wherever we were before.
         pwd = self.cmd( 'pwd' ).strip()
         self.sendCmd( 'exec chroot', self.root, 'bash -ms mininet:'
-                       + self.name )
+        + self.name )
         self.waiting = False
         self.cmd( 'cd', pwd )
         # In order for many utilities to work,
         # we need to remount /proc and /sys
         self.cmd( 'mount /proc' )
         self.cmd( 'mount /sys' )
-	self.dpid = dpid if dpid else self.defaultDpid()
-    
+        self.loopback = loopback
+        self.dpid = self.loopbackDpid(self.loopback, "00000000")
+
+    def loopbackDpid(self, loopback, extrainfo):
+        splitted_loopback = loopback.split('.')
+        hexloopback = '{:02X}{:02X}{:02X}{:02X}'.format(*map(int, splitted_loopback))
+        dpid = "%s%s" %(extrainfo, hexloopback)
+        if len(dpid)>16:
+            print "Unable To Derive DPID From Loopback and ExtraInfo";
+            sys.exit(-1)
+        return dpid
+
     def defaultDpid( self ):
         "Derive dpid from switch name, s1 -> 1"
         try:

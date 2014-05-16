@@ -52,4 +52,4 @@ optional arguments:
 
 		2)In order to use the topology topo.json in ./topo/ -> file:topo.json
 
-		3)In order to use random generation of networkx e-r:n,p (i.e number of core nodes, interconnection probability)
+		3)In order to use random generation of networkx e_r:n,p (i.e number of core nodes, interconnection probability)

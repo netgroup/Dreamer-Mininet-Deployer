@@ -65,7 +65,7 @@ hosts = []
 
 # XXX Parameter 
 # Vll path
-vll_path = "" #"../sdn_controller_app/vll_pusher_for_floodlights/"
+vll_path = "" #"../vll_pusher_for_floodlights/"
 # Executable path
 path_quagga_exec = "" #"/usr/lib/quagga/"
 
@@ -77,8 +77,8 @@ ctrls_port = [6633]
 CORE_APPROACH = 'A' # It can be A or B
 
 # XXX Virtual Leased Line Configuration
-LHS_tunnel = ['euh1']
-RHS_tunnel = ['euh3']
+LHS_tunnel = ['euh1', "euh2"]
+RHS_tunnel = ['euh3', "euh1"]
 tunnels = []
 LHS_tunnel_aoshi = []
 RHS_tunnel_aoshi = []
@@ -255,7 +255,7 @@ def create_access_network(net):
 	global aoshis
 	OSHI = len(oshis)
 	for i in range(OSHI, (2*OSHI)):
-		aoshi = (net.addHost('aos%s' % (i+1)))
+		aoshi = (net.addHost('aos%s' % (i+1), loopback = give_me_next_loopback()))
 		l = net.addLink(aoshi, oshis[i % OSHI])
 		nets.append(OSPFNetwork(intfs=[l.intf1.name,l.intf2.name], ctrl=False))
 		print "*** Connect", aoshi, "To", oshis[i % OSHI]
@@ -295,7 +295,7 @@ def create_l2_access_network(aoshi, net, n_host=1):
 
 	print "*** Create End User Hosts"
 	for i in range(len(hosts), (len(hosts) + n_host)):
-		host = net.addHost(('euh%s') % (i+1))
+		host = net.addHost(('euh%s') % (i+1), loopback = "0.0.0.0")
 		l = net.addLink(host,sw)
 		l2net.addLink(l)
 		print "*** Connect", host, "To", sw
@@ -325,12 +325,12 @@ def buildTopoFromFile(param):
 	if verbose:
 		print "*** Build OSHI"	
 	for oshi in set_oshis:
-		osh = net.addHost(oshi)
+		osh = net.addHost(oshi, loopback = give_me_next_loopback())
 		oshis.append(osh)
 	if verbose:
 		print "*** Build AOSHI"
 	for aoshi in set_aoshis:
-		aos = net.addHost(aoshi)
+		aos = net.addHost(aoshi, loopback = give_me_next_loopback())
 		aoshis.append(aos)
 	if verbose:
 		print "*** Build L2SWS"
@@ -341,7 +341,7 @@ def buildTopoFromFile(param):
 	if verbose:
 		print "*** Build EUHS"
 	for euh in set_euhs:
-		net.addHost(euh)
+		net.addHost(euh, loopback = "0.0.0.0")
 		hosts.append(euh)	
 	if verbose:	
 		print "*** Create Core Networks Point To Point"
@@ -449,9 +449,6 @@ def buildTopoFromFile(param):
 	for i in range(0, len(LHS_tunnel)):
 		tunnels.append(Tunnel())
 
-	loopback[2]=sdn_lastnet
-
-	print "*** Loopback Address Start From:", loopback 
 	print "*** Tunnels LHS:", LHS_tunnel
 	print "*** Tunnels RHS:", RHS_tunnel
 
@@ -461,7 +458,7 @@ def buildTopoFromFile(param):
 
 	i = 0
 	for tunnel in tunnels :	
-		print "*** Tunnel %d, Subnet %s0, Intfs %s" % (i+1, tunnel.subnet, tunnel.intfs)
+		print "*** Tunnel %d, Subnet %s.%s.%s.%s, Intfs %s" % (i+1, tunnel.subnet[0], tunnel.subnet[1], tunnel.subnet[2], 0, tunnel.intfs)
 		i = i + 1
 
 	i = 0
@@ -482,7 +479,7 @@ def buildTopoFromFile(param):
 
 
 	for network in nets:
-		print "*** OSPF Network:", network.subnet + "0,", str(network.intfs) + ",", "cost %s," % network.cost, "hello interval %s," % network.hello_int
+		print "*** OSPF Network: %s.%s.%s.%s" % (network.subnet[0], network.subnet[1], network.subnet[2], 0), str(network.intfs) + ",", "cost %s," % network.cost, "hello interval %s," % network.hello_int
 	return net
 	
 def Mesh(OSHI_n=4):
@@ -499,7 +496,7 @@ def Mesh(OSHI_n=4):
 	h = 0
 	print "*** Create Core Networks"
 	for i in range(OSHI_n):
-		oshi = (net.addHost('osh%s' % (i+1)))
+		oshi = (net.addHost('osh%s' % (i+1), loopback = give_me_next_loopback()))
 		for rhs in oshis:
 			l = net.addLink(oshi, rhs)
 			nets.append(OSPFNetwork(intfs=[l.intf1.name,l.intf2.name], ctrl=False))
@@ -530,9 +527,6 @@ def Mesh(OSHI_n=4):
 	for i in range(0, len(LHS_tunnel)):
 		tunnels.append(Tunnel())
 
-	loopback[2]=sdn_lastnet
-
-	print "*** Loopback Address Start From:", loopback 
 	print "*** Tunnels LHS:", LHS_tunnel
 	print "*** Tunnels RHS:", RHS_tunnel
 
@@ -542,7 +536,7 @@ def Mesh(OSHI_n=4):
 
 	i = 0
 	for tunnel in tunnels :	
-		print "*** Tunnel %d, Subnet %s0, Intfs %s" % (i+1, tunnel.subnet, tunnel.intfs)
+		print "*** Tunnel %d, Subnet %s.%s.%s.%s, Intfs %s" % (i+1, tunnel.subnet[0], tunnel.subnet[1], tunnel.subnet[2], 0, tunnel.intfs)
 		i = i + 1
 
 	i = 0
@@ -561,7 +555,7 @@ def Mesh(OSHI_n=4):
 	print "*** LHS Port:", LHS_tunnel_port
 	print "*** RHS Port:", RHS_tunnel_port
 	for network in nets:
-		print "*** OSPF Network:", network.subnet + "0,", str(network.intfs) + ",", "cost %s," % network.cost, "hello interval %s," % network.hello_int
+		print "*** OSPF Network: %s.%s.%s.%s" % (network.subnet[0], network.subnet[1], network.subnet[2], 0), str(network.intfs) + ",", "cost %s," % network.cost, "hello interval %s," % network.hello_int
 	return net
 
 def erdos_renyi_from_nx(n, p):
@@ -579,7 +573,7 @@ def erdos_renyi_from_nx(n, p):
 	# This is the basic behavior, with nx we create only the core network
 	for n in g.nodes():
 		n = n + 1
-		oshi = (net.addHost('osh%s' % (n)))
+		oshi = (net.addHost('osh%s' % (n), loopback = give_me_next_loopback()))
 		oshis.append(oshi)
 	for (n1, n2) in g.edges():
 		n1 = n1 + 1
@@ -612,9 +606,6 @@ def erdos_renyi_from_nx(n, p):
 	for i in range(0, len(LHS_tunnel)):
 		tunnels.append(Tunnel())
 
-	loopback[2]=sdn_lastnet
-
-	print "*** Loopback Address Start From:", loopback 
 	print "*** Tunnels LHS:", LHS_tunnel
 	print "*** Tunnels RHS:", RHS_tunnel
 
@@ -624,7 +615,7 @@ def erdos_renyi_from_nx(n, p):
 
 	i = 0
 	for tunnel in tunnels :	
-		print "*** Tunnel %d, Subnet %s0, Intfs %s" % (i+1, tunnel.subnet, tunnel.intfs)
+		print "*** Tunnel %d, Subnet %s.%s.%s.%s, Intfs %s" % (i+1, tunnel.subnet[0], tunnel.subnet[1], tunnel.subnet[2], 0, tunnel.intfs)
 		i = i + 1
 
 	i = 0
@@ -645,7 +636,7 @@ def erdos_renyi_from_nx(n, p):
 
 
 	for network in nets:
-		print "*** Create Network:", network.subnet + "0,", str(network.intfs) + ",", "cost %s," % network.cost, "hello interval %s," % network.hello_int
+		print "*** OSPF Network: %s.%s.%s.%s" % (network.subnet[0], network.subnet[1], network.subnet[2], 0), str(network.intfs) + ",", "cost %s," % network.cost, "hello interval %s," % network.hello_int
 
 	# We generate the topo's png
 	pos = nx.circular_layout(g)
@@ -710,7 +701,6 @@ def configure_env_ctrl(ctrl):
 		ctrl.cmd(cmd)
 
 def configure_node(node):
-	global last_sdn_host
 	print "*** Configuring", node.name
 	strip_ip(node)
 	for net in nets:
@@ -724,9 +714,9 @@ def configure_node(node):
 						break
 				if sdn == False:
 					ip = net.give_me_next_ip()
-					gw_ip = (net.subnet + "%s") % 1
+					gw_ip = "%s.%s.%s.%s" % (net.subnet[0], net.subnet[1], net.subnet[2], 1)
 					intf = intf_to_conf
-					node.cmd('ip addr add %s/%s brd + dev %s' %(ip, netbit, intf))
+					node.cmd('ip addr add %s/%s brd + dev %s' %(ip, ip_netbit, intf))
 					node.cmd('ip link set %s up' % intf)
 					node.cmd('route add default gw %s %s' %(gw_ip, intf))
 				else:
@@ -859,7 +849,7 @@ def configure_quagga(oshi):
 	for net in nets:
 		intfs_to_conf = net.belong(oshi.name)
 		if(len(intfs_to_conf) > 0):
-			ospfd_nets.append(((net.subnet + "0"),netbit,(net.area)))
+			ospfd_nets.append(("%s.%s.%s.%s" %(net.subnet[0], net.subnet[1], net.subnet[2], 0), ip_netbit,(net.area)))
 			for intf_to_conf in intfs_to_conf:
 				ip = net.give_me_next_ip()
 				if CORE_APPROACH == "A":
@@ -870,10 +860,13 @@ def configure_quagga(oshi):
 				ospfd_conf.write("ospf cost %s\n" % net.cost)
 				ospfd_conf.write("ospf hello-interval %s\n\n" % net.hello_int)
 				zebra_conf.write("interface " + intfname + "\n")
-				zebra_conf.write("ip address %s/%s\n" %(ip, netbit))
+				zebra_conf.write("ip address %s/%s\n" %(ip, ip_netbit))
 				zebra_conf.write("link-detect\n\n")
 	intfname = 'lo'
-	ip = give_me_next_loopback()
+	if type(oshi) is RemoteController:
+		ip = give_me_next_loopback()
+	else:
+		ip = oshi.loopback
 	ospfd_conf.write("interface " + intfname + "\n")
 	ospfd_conf.write("ospf cost %s\n" % 1)
 	ospfd_conf.write("ospf hello-interval %s\n\n" % 2)
@@ -906,18 +899,22 @@ def configure_ospf_no_vlan_approach(oshi, intfname):
 	oshi.cmd('ip link set %s up' % intfname)
 	return intfname
 
-def configure_vll_pusher():
+def configure_vll_pusher(net):
 	print "*** Create Configuration File For Vll Pusher"
 	path = vll_path + "vll_pusher.cfg"
 	vll_pusher_cfg = open(path,"w")
 	for i in range(0, len(LHS_tunnel_aoshi)):
-		aoshi = LHS_tunnel_aoshi[i]
+		aoshi = LHS_tunnel_aoshi[i]		
+		lhs_dpid = net.getNodeByName(aoshi).dpid
+		lhs_dpid = ':'.join(s.encode('hex') for s in lhs_dpid.decode('hex'))
 		port = LHS_tunnel_port[i]
 		lhs_port = port
-		aoshi = RHS_tunnel_aoshi[i]
+		aoshi = RHS_tunnel_aoshi[i]		
+		rhs_dpid = net.getNodeByName(aoshi).dpid
+		rhs_dpid = ':'.join(s.encode('hex') for s in rhs_dpid.decode('hex'))
 		port = RHS_tunnel_port[i]
 		rhs_port = port
-		vll_pusher_cfg.write("%s|%s|%s|%s|%d|%d|\n" % (LHS_tunnel_aoshi[i], RHS_tunnel_aoshi[i], lhs_port, rhs_port, LHS_tunnel_vlan[i], RHS_tunnel_vlan[i]))
+		vll_pusher_cfg.write("%s|%s|%s|%s|%d|%d|\n" % (lhs_dpid, rhs_dpid, lhs_port, rhs_port, LHS_tunnel_vlan[i], RHS_tunnel_vlan[i]))
 	vll_pusher_cfg.close()
 	root = Node( 'root', inNamespace=False )
 	root.cmd("chmod 777 %s" %(path))
@@ -965,7 +962,7 @@ def init_net(net):
 	configure_standalone_sw(switches)
 	configure_l2_accessnetwork()
 	# Configure VLL Pusher
-	configure_vll_pusher()
+	configure_vll_pusher(net)
 	print "*** Type 'exit' or control-D to shut down network"
 	CLI( net )
 	net.stop()
